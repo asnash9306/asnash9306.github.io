@@ -1,6 +1,7 @@
 /* =========================================================
-   IT-SURVIVAL : Der 9-to-5 Simulator — Game Logic & State
-   Vanilla JS, keine Abhängigkeiten, keine Build-Tools
+   IT-SURVIVAL : Der 9-to-5 Simulator — Game Logic v2
+   10 Screens: 0 Start · 1 HDMI · 2 Tickets · 3 Passwort ·
+   4 Viren · 5 Logs · 6 Kaffee · 7 RAM · 8 Quiz · 9 Ende
    ========================================================= */
 
 'use strict';
@@ -9,17 +10,28 @@
    1. GLOBAL STATE
    ========================================================= */
 const gameState = {
-  currentLevel: 0,     // 0 = Start, 1-6 = Minigames, 7 = Endscreen
-  bossPatience: 100,   // sinkt bei Fehlern
-  coffeeLevel: 100,    // sinkt alle 2s um 1, Level-Abschluss füllt auf
+  currentLevel: 0,
+  bossPatience: 100,
+  coffeeLevel: 100,
   won: false,
-  timers: { coffee: null, pw: null, virus: null },
+  timers: { coffee: null, pw: null, virus: null, log: null },
 };
 
-const COFFEE_TICK_MS = 2000;   // Kaffee-Intervall
-const COFFEE_PER_TICK = 1;     // Verlust pro Tick
-const COFFEE_REFILL = 35;      // Belohnung pro Level-Abschluss
+const COFFEE_TICK_MS = 2000;
+const COFFEE_PER_TICK = 1;
+const COFFEE_REFILL = 30;
 const LOW_WARN = 20;
+
+const LEVEL_META = {
+  1: { tag: 'LVL 1/8', task: 'HARDWARE-SETUP',      clock: '09:00' },
+  2: { tag: 'LVL 2/8', task: 'FIRST-LEVEL SUPPORT', clock: '10:00' },
+  3: { tag: 'LVL 3/8', task: 'PASSWORT-PING-PONG',  clock: '11:00' },
+  4: { tag: 'LVL 4/8', task: 'VIREN-JAGD',          clock: '12:00' },
+  5: { tag: 'LVL 5/8', task: 'LOG-ANALYSE',         clock: '13:00' },
+  6: { tag: 'LVL 6/8', task: 'KAFFEE-NOTFALL',      clock: '14:00' },
+  7: { tag: 'LVL 7/8', task: 'RAM-UPGRADE',         clock: '15:00' },
+  8: { tag: 'LVL 8/8', task: 'KAFFEE-QUIZ',         clock: '16:00' },
+};
 
 /* =========================================================
    2. HELPERS
@@ -44,7 +56,7 @@ function showToast(msg, type) {
 function playOverlay(id) {
   const el = $(id);
   el.classList.remove('play');
-  void el.offsetWidth; // Reflow → Animation neu starten
+  void el.offsetWidth;
   el.classList.add('play');
 }
 
@@ -60,10 +72,11 @@ function showBSOD(ms) {
   bsodTimeout = setTimeout(() => b.classList.remove('show'), ms || 1000);
 }
 
-function confetti() {
+function confetti(count) {
   const layer = $('confetti-layer');
   const colors = ['#00ff41', '#4fc3f7', '#ff2a6d', '#ffd54f', '#ffffff', '#ff8a65'];
-  for (let i = 0; i < 90; i++) {
+  const n = count || 90;
+  for (let i = 0; i < n; i++) {
     const c = document.createElement('div');
     c.className = 'confetti';
     c.style.left = Math.random() * 100 + 'vw';
@@ -90,10 +103,16 @@ function updateHUD() {
   $('patience-value').textContent = p;
   coffeeFill.classList.toggle('low-coffee', c <= LOW_WARN && c > 0);
   patienceFill.classList.toggle('low-patience', p <= LOW_WARN && p > 0);
+
+  const meta = LEVEL_META[gameState.currentLevel];
+  if (meta) {
+    $('hud-level').textContent = meta.tag;
+    $('hud-task').textContent = meta.task;
+  }
 }
 
 function changePatience(delta, reason) {
-  if (gameState.currentLevel <= 0 || gameState.currentLevel >= 7) return;
+  if (gameState.currentLevel <= 0 || gameState.currentLevel >= 9) return;
   gameState.bossPatience = clamp(gameState.bossPatience + delta, 0, 100);
   updateHUD();
   if (reason) showToast(reason + '  (Boss ' + delta + ')');
@@ -102,20 +121,19 @@ function changePatience(delta, reason) {
 }
 
 function checkGameOver() {
-  if (gameState.currentLevel <= 0 || gameState.currentLevel >= 7) return false;
+  if (gameState.currentLevel <= 0 || gameState.currentLevel >= 9) return false;
   if (gameState.coffeeLevel <= 0 || gameState.bossPatience <= 0) {
     gameState.won = false;
-    gotoLevel(7);
+    gotoLevel(9);
     return true;
   }
   return false;
 }
 
-/* Kaffee-Loop: sinkt alle 2 Sekunden um 1 */
 function startCoffeeLoop() {
   stopTimer('coffee');
   gameState.timers.coffee = setInterval(() => {
-    if (gameState.currentLevel <= 0 || gameState.currentLevel >= 7) return;
+    if (gameState.currentLevel <= 0 || gameState.currentLevel >= 9) return;
     gameState.coffeeLevel = clamp(gameState.coffeeLevel - COFFEE_PER_TICK, 0, 100);
     updateHUD();
     checkGameOver();
@@ -130,9 +148,7 @@ function stopTimer(key) {
 }
 
 function stopAllTimers() {
-  stopTimer('coffee');
-  stopTimer('pw');
-  stopTimer('virus');
+  Object.keys(gameState.timers).forEach(stopTimer);
 }
 
 /* =========================================================
@@ -150,7 +166,7 @@ function gotoLevel(n) {
   gameState.currentLevel = n;
 
   const hud = $('hud');
-  if (n >= 1 && n <= 6) {
+  if (n >= 1 && n <= 8) {
     setDisplay(hud, true);
     $('app').classList.add('hud-on');
   } else {
@@ -160,21 +176,21 @@ function gotoLevel(n) {
 
   setDisplay($('level-' + n), true, true);
 
-  if (n === 7) renderEndScreen();
+  if (n === 9) renderEndScreen();
   else if (levelInits[n]) levelInits[n]();
 }
 
 function completeLevel(next) {
-  if (gameState.currentLevel >= 7) return;
+  if (gameState.currentLevel >= 9) return;
   gameState.coffeeLevel = clamp(gameState.coffeeLevel + COFFEE_REFILL, 0, 100);
   updateHUD();
   setTimeout(() => {
-    if (gameState.currentLevel < 7) gotoLevel(next);
+    if (gameState.currentLevel < 9) gotoLevel(next);
   }, 750);
 }
 
 /* =========================================================
-   5. LEVEL 7 : FEIERABEND (End-Screen)
+   5. LEVEL 9 : FEIERABEND
    ========================================================= */
 function renderEndScreen() {
   stopAllTimers();
@@ -198,7 +214,7 @@ function renderEndScreen() {
       'Du hast die Schicht überlebt!<br>' +
       '☕ Kaffee übrig: ' + gameState.coffeeLevel + '%<br>' +
       '😡 Boss-Geduld übrig: ' + gameState.bossPatience + '%';
-    confetti();
+    confetti(90);
   } else {
     title.textContent = 'GAME OVER';
     title.classList.add('gameover');
@@ -229,7 +245,6 @@ $('btn-restart').addEventListener('click', () => {
 
 /* =========================================================
    7. UNIFIED TOUCH + MOUSE HELPER
-   Alle Minigames nutzen Touch-Events UND Maus-Fallbacks.
    ========================================================= */
 function addPointer(el, handlers) {
   const getXY = (e) => {
@@ -281,22 +296,32 @@ function pointInRect(x, y, rect, pad) {
 }
 
 /* =========================================================
-   8. LEVEL 1 : HARDWARE-SETUP (HDMI-Kabel)
+   8. LEVEL 1 : PC-RÜCKSEITE (HDMI — Mainboard vs. GPU)
    ========================================================= */
 levelInits[1] = function () {
   const cable = $('cable');
   const cableInner = $('cable-inner');
   const portMb = $('port-mb');
-  const portGpu = $('port-gpu');
+  const portGpu = $('port-gpu-hdmi');
+
+  // Alle anderen Anschlüsse sind ebenfalls Fallen
+  const traps = [
+    { sel: '#pc-back .io-vga', msg: 'VGA?! Wir haben 2026!', pen: -10 },
+    { sel: '#pc-back .gpu-dp', msg: 'HDMI passt nicht in DisplayPort!', pen: -10 },
+    { sel: '#pc-back .io-usb', msg: 'Das ist kein Monitor-Anschluss!', pen: -10 },
+    { sel: '#pc-back .io-lan', msg: 'Das ist kein Monitor-Anschluss!', pen: -10 },
+    { sel: '#pc-back .io-audio', msg: 'Sound ja, Bild nein. Falscher Port!', pen: -10 },
+  ].map((t) => ({
+    pen: t.pen,
+    msg: t.msg,
+    els: Array.from(document.querySelectorAll(t.sel)),
+  }));
 
   let flipCount = 0;
-  let home = null;          // Ausgangsposition des Kabels
   let startX = 0, startY = 0;
-  let baseX = 0, baseY = 0; // kumulierte Verschiebung
+  let baseX = 0, baseY = 0;
   let moved = false;
   let done = false;
-
-  home = cable.getBoundingClientRect();
 
   function resetCable() {
     baseX = 0; baseY = 0;
@@ -309,10 +334,14 @@ levelInits[1] = function () {
     else if (flipCount > 0) cableInner.classList.add('flip-2');
   }
 
+  function clearGlow() {
+    portGpu.classList.remove('hot');
+    portMb.classList.remove('trap-glow');
+  }
+
   addPointer(cable, {
     start(x, y) {
       if (done) return;
-      home = cable.getBoundingClientRect();
       startX = x; startY = y;
       moved = false;
       cable.classList.add('dragging');
@@ -324,13 +353,17 @@ levelInits[1] = function () {
       if (Math.abs(dx) + Math.abs(dy) > 10) moved = true;
       if (moved) {
         cable.style.transform = 'translate(' + (baseX + dx) + 'px, ' + (baseY + dy) + 'px)';
+        // Nähe-Feedback auf den HDMI-Buchsen
+        portGpu.classList.toggle('hot', pointInRect(x, y, portGpu.getBoundingClientRect(), 24));
+        portMb.classList.toggle('trap-glow', pointInRect(x, y, portMb.getBoundingClientRect(), 24));
       }
     },
     end(x, y) {
       if (done) return;
       cable.classList.remove('dragging');
+      clearGlow();
 
-      // TAP: Kabel drehen (flipCount + 1, 180°-Animation)
+      // TAP: Stecker drehen (flipCount + 1, 180°-Animation)
       if (!moved) {
         flipCount++;
         applyFlip();
@@ -340,24 +373,31 @@ levelInits[1] = function () {
       baseX += x - startX;
       baseY += y - startY;
 
-      const rMb = portMb.getBoundingClientRect();
-      const rGpu = portGpu.getBoundingClientRect();
-
-      if (pointInRect(x, y, rMb, 12)) {
-        // Fehler 1: Mainboard-Port
+      // Falle 1: HDMI am Mainboard
+      if (pointInRect(x, y, portMb.getBoundingClientRect(), 14)) {
         changePatience(-15, 'Falscher Port! GPU ist verbaut!');
         resetCable();
         return;
       }
 
-      if (pointInRect(x, y, rGpu, 12)) {
+      // Falle 2: alle anderen Anschlüsse
+      for (const trap of traps) {
+        for (const el of trap.els) {
+          if (pointInRect(x, y, el.getBoundingClientRect(), 12)) {
+            changePatience(trap.pen, trap.msg);
+            resetCable();
+            return;
+          }
+        }
+      }
+
+      // Ziel: HDMI an der GPU
+      if (pointInRect(x, y, portGpu.getBoundingClientRect(), 14)) {
         if (flipCount < 2) {
-          // Fehler 2: richtiger Port, falsche Orientierung
           showToast('Passt nicht. Dreh das Kabel!');
           resetCable();
           return;
         }
-        // ERFOLG: GPU + flipCount >= 2
         done = true;
         cable.classList.add('dock');
         portGpu.classList.add('hot');
@@ -367,21 +407,20 @@ levelInits[1] = function () {
         return;
       }
 
-      // Nirgends losgelassen → zurückspringen
       resetCable();
     },
   });
 };
 
 /* =========================================================
-   9. LEVEL 2 : TICKET-TINDER (First-Level Support)
+   9. LEVEL 2 : TICKET-TINDER
    ========================================================= */
 const TICKETS = [
   { id: 'T-1042', emoji: '☕', text: 'Kaffee in Tastatur verschüttet', isDumbQuestion: true },
   { id: 'T-1043', emoji: '🔥', text: 'Datenbank brennt', isDumbQuestion: false },
   { id: 'T-1044', emoji: '🗑', text: 'User hat das Internet gelöscht', isDumbQuestion: true },
   { id: 'T-1045', emoji: '📉', text: 'Server offline – Shop down', isDumbQuestion: false },
-  { id: 'T-1046', emoji: '🖱', text: 'Maus funktioniert nicht (USB nicht eingesteckt)', isDumbQuestion: true },
+  { id: 'T-1046', emoji: '🖱', text: 'Maus geht nicht (USB nicht eingesteckt)', isDumbQuestion: true },
 ];
 
 levelInits[2] = function () {
@@ -393,7 +432,6 @@ levelInits[2] = function () {
 
   function renderStack() {
     stack.innerHTML = '';
-    // untere Karten zuerst, oberste zuletzt (höchster z-Index)
     for (let i = queue.length - 1; i >= 0; i--) {
       const t = queue[i];
       const card = document.createElement('div');
@@ -419,7 +457,7 @@ levelInits[2] = function () {
 
     addPointer(card, {
       start(x) { sx = x; dragging = false; card.style.transition = 'none'; },
-      move(x, y) {
+      move(x) {
         const dx = x - sx;
         if (Math.abs(dx) > 6) dragging = true;
         if (!dragging) return;
@@ -431,7 +469,6 @@ levelInits[2] = function () {
         card.style.transition = '';
         const dx = x - sx;
         if (!dragging || Math.abs(dx) < 70) {
-          // Snap-back
           card.style.transform = 'translateX(0) rotate(0)';
           stampOk.style.opacity = 0;
           stampNo.style.opacity = 0;
@@ -440,7 +477,6 @@ levelInits[2] = function () {
         const swipedRight = dx > 0;
         const correct = (swipedRight && !ticket.isDumbQuestion) || (!swipedRight && ticket.isDumbQuestion);
 
-        // Karte wegfliegen lassen
         card.style.transform = 'translateX(' + (swipedRight ? 1 : -1) * 140 + 'vw) rotate(' + (swipedRight ? 30 : -30) + 'deg)';
         card.style.opacity = '0';
 
@@ -489,7 +525,6 @@ levelInits[3] = function () {
       el: $('rule-forbidden'),
       test: (v) => v.length > 0 && v.toLowerCase() !== 'passwort' && v.toLowerCase() !== 'admin',
     },
-    // Emoji = erweiterter Unicode außerhalb ASCII/BMP-Buchstaben
     emoji: { el: $('rule-emoji'), test: (v) => /[^\u0000-\u24FF]/.test(v) },
   };
 
@@ -509,7 +544,7 @@ levelInits[3] = function () {
   }
 
   input.addEventListener('keyup', checkAll);
-  input.addEventListener('input', checkAll); // Fallback für mobile Tastaturen
+  input.addEventListener('input', checkAll);
 
   btnSave.onclick = () => {
     stopTimer('pw');
@@ -518,7 +553,6 @@ levelInits[3] = function () {
     completeLevel(4);
   };
 
-  // 20-Sekunden-Timer
   const t0 = Date.now();
   stopTimer('pw');
   gameState.timers.pw = setInterval(() => {
@@ -528,7 +562,6 @@ levelInits[3] = function () {
       stopTimer('pw');
       timerFill.style.width = '0%';
       timerText.textContent = '0s';
-      // Zeitlimit verpasst: -20 Geduld, Timer startet neu
       changePatience(-20, 'Zu langsam! Der Boss wartet!');
       if (gameState.currentLevel === 3) {
         levelInits[3]();
@@ -547,7 +580,7 @@ levelCleanups[3] = function () {
 };
 
 /* =========================================================
-   11. LEVEL 4 : VIREN-JAGD (Whack-a-Mole)
+   11. LEVEL 4 : VIREN-JAGD
    ========================================================= */
 const VIRUS_EMOJIS = ['😈', '👾', '🦠', '💣'];
 const SYSTEM_EMOJIS = ['📁', '💾', '📄', '🖥'];
@@ -581,7 +614,6 @@ levelInits[4] = function () {
     icon.innerHTML = '<span class="fi-emoji">' + emoji + '</span><span class="fi-name">' + name + '</span>';
     desktop.appendChild(icon);
 
-    // Verschwindet nach 2 Sekunden von allein
     const despawn = setTimeout(() => { if (icon.parentNode) icon.remove(); }, 2000);
 
     addPointer(icon, {
@@ -591,7 +623,6 @@ levelInits[4] = function () {
         if (!icon.parentNode) return;
 
         if (isVirus) {
-          // Virus gelöscht → Partikel-Explosion
           const ir = icon.getBoundingClientRect();
           const cx = ir.left + ir.width / 2;
           const cy = ir.top + ir.height / 2;
@@ -617,7 +648,6 @@ levelInits[4] = function () {
             completeLevel(5);
           }
         } else {
-          // Systemdatei angefasst → BSOD + Geduld -25
           icon.remove();
           showBSOD(1000);
           changePatience(-25, 'SYSTEMDATEI GELÖSCHT!');
@@ -637,12 +667,200 @@ levelCleanups[4] = function () {
 };
 
 /* =========================================================
-   12. LEVEL 5 : RAM-UPGRADE (3 Phasen)
+   12. LEVEL 5 : LOG-ANALYSE (neu)
    ========================================================= */
-const DUST_DISTANCE = 420;   // benötigte Wisch-Distanz in px
-const CLIP_WINDOW_MS = 500;  // beide Klammern innerhalb von 0.5s
+const LOG_TIME_MS = 30000;
+const LOG_LINES_NEEDED = 6;
+
+const LOG_TEXTS = {
+  err: [
+    'segfault at 0x7fff in module auth.so',
+    'FATAL: database connection lost',
+    'kernel panic – not syncing',
+    'OOM killer invoked on process java',
+    'disk /dev/sda1: I/O error',
+    'CRITICAL: raid array degraded',
+    'panic: runtime error: index out of range',
+  ],
+  warn: [
+    'cpu temperature above threshold',
+    'deprecated API call detected',
+    'swap usage at 87%',
+    'tls certificate expires in 3 days',
+    'slow query took 2.4s',
+  ],
+  info: [
+    'backup completed successfully',
+    'user admin logged in',
+    'cron job finished: cleanup',
+    'http 200 GET /index.html',
+    'service nginx reloaded',
+    'sync done in 12ms',
+  ],
+};
 
 levelInits[5] = function () {
+  const feed = $('log-lines');
+  feed.innerHTML = '';
+  let found = 0;
+  let clockS = 0;
+  $('log-count').textContent = '0';
+
+  function stamp() {
+    clockS += 1 + Math.floor(Math.random() * 4);
+    const mm = String(Math.floor(clockS / 60)).padStart(2, '0');
+    const ss = String(clockS % 60).padStart(2, '0');
+    return '13:' + mm + ':' + ss;
+  }
+
+  function spawnLine() {
+    if (gameState.currentLevel !== 5) return;
+    const roll = Math.random();
+    const type = roll < 0.35 ? 'err' : roll < 0.6 ? 'warn' : 'info';
+    const texts = LOG_TEXTS[type];
+    const text = texts[Math.floor(Math.random() * texts.length)];
+
+    const line = document.createElement('div');
+    line.className = 'log-line ' + type;
+    const label = type === 'err' ? 'ERROR' : type.toUpperCase();
+    line.innerHTML = '<span class="lt">[' + stamp() + ']</span> <span class="lv">[' + label + ']</span> ' + text;
+    feed.prepend(line);
+
+    while (feed.children.length > 9) feed.removeChild(feed.lastChild);
+
+    addPointer(line, {
+      start(px, py, e) {
+        if (e.cancelable) e.preventDefault();
+        if (line.classList.contains('caught')) return;
+        if (type === 'err') {
+          line.classList.add('caught');
+          found++;
+          $('log-count').textContent = found;
+          setTimeout(() => { if (line.parentNode) line.remove(); }, 450);
+          if (found >= LOG_LINES_NEEDED) {
+            stopTimer('log');
+            stopTimer('logt');
+            flashGreen();
+            showToast('Alle Errors gefixt! Server beruhigt. 📋', 'good');
+            completeLevel(6);
+          }
+        } else {
+          line.classList.remove('miss');
+          void line.offsetWidth;
+          line.classList.add('miss');
+          changePatience(-10, 'Das war kein ERROR!');
+        }
+      },
+    });
+  }
+
+  stopTimer('log');
+  gameState.timers.log = setInterval(spawnLine, 900);
+
+  // 30-Sekunden-Timer
+  const t0 = Date.now();
+  const fill = $('log-timer-fill');
+  const txt = $('log-timer-text');
+  stopTimer('logt');
+  gameState.timers.logt = setInterval(() => {
+    if (gameState.currentLevel !== 5) { stopTimer('logt'); return; }
+    const remain = LOG_TIME_MS - (Date.now() - t0);
+    if (remain <= 0) {
+      stopTimer('logt');
+      changePatience(-20, 'Logs nicht rechtzeitig gesichtet!');
+      if (gameState.currentLevel === 5) levelInits[5]();
+      return;
+    }
+    const pct = (remain / LOG_TIME_MS) * 100;
+    fill.style.width = pct + '%';
+    fill.classList.toggle('danger', pct < 30);
+    txt.textContent = Math.ceil(remain / 1000) + 's';
+  }, 100);
+};
+
+levelCleanups[5] = function () {
+  stopTimer('log');
+  stopTimer('logt');
+  $('log-lines').innerHTML = '';
+};
+
+/* =========================================================
+   13. LEVEL 6 : KAFFEE-NOTFALL (neu)
+   ========================================================= */
+levelInits[6] = function () {
+  const liquid = $('coffee-liquid');
+  const btn = $('btn-brew');
+
+  let fill = 10;
+  let brewing = false;
+  let done = false;
+
+  liquid.style.height = fill + '%';
+  btn.classList.remove('brewing');
+
+  function win() {
+    done = true;
+    brewing = false;
+    btn.classList.remove('brewing');
+    stopTimer('brew');
+    gameState.coffeeLevel = 100;
+    updateHUD();
+    confetti(30);
+    showToast('Gerettet! Koffein-Level wiederhergestellt. ☕', 'good');
+    completeLevel(7);
+  }
+
+  addPointer(btn, {
+    start(px, py, e) {
+      if (done) return;
+      if (e.cancelable) e.preventDefault();
+      brewing = true;
+      btn.classList.add('brewing');
+    },
+    end() {
+      if (done) return;
+      brewing = false;
+      btn.classList.remove('brewing');
+      if (fill >= 76 && fill <= 92) {
+        win();
+      } else if (fill > 92) {
+        showToast('Fast zu viel – Achtung, gleich läuft es über!');
+      } else {
+        showToast('Noch zu wenig – weiter füllen!');
+      }
+    },
+  });
+
+  stopTimer('brew');
+  gameState.timers.brew = setInterval(() => {
+    if (gameState.currentLevel !== 6 || done) { return; }
+    if (brewing) {
+      fill = Math.min(fill + 1.3, 104);
+    } else {
+      fill = Math.max(fill - 0.35, 10);
+    }
+    liquid.style.height = Math.min(fill, 100) + '%';
+    if (fill >= 100) {
+      brewing = false;
+      btn.classList.remove('brewing');
+      fill = 10;
+      liquid.style.height = '10%';
+      changePatience(-15, 'Überlaufen! Die Tastatur ist nass!');
+    }
+  }, 50);
+};
+
+levelCleanups[6] = function () {
+  stopTimer('brew');
+};
+
+/* =========================================================
+   14. LEVEL 7 : RAM-UPGRADE (3 Phasen)
+   ========================================================= */
+const DUST_DISTANCE = 420;
+const CLIP_WINDOW_MS = 500;
+
+levelInits[7] = function () {
   const cleanArea = $('clean-area');
   const dust = $('dust');
   const clipLeft = $('clip-left');
@@ -655,7 +873,6 @@ levelInits[5] = function () {
 
   let phase = 1;
 
-  // Reset UI
   dust.classList.remove('gone');
   clipLeft.disabled = true;
   clipRight.disabled = true;
@@ -668,7 +885,6 @@ levelInits[5] = function () {
   ramInner.classList.remove('rot');
   phaseLabel.textContent = 'Phase 1/3: Wische den Staub vom Mainboard!';
 
-  /* --- Phase 1: Staub wegwischen --- */
   let dustDist = 0;
   let lastX = null, lastY = null;
 
@@ -691,7 +907,6 @@ levelInits[5] = function () {
     end() { lastX = null; lastY = null; },
   });
 
-  /* --- Phase 2: Klammern innerhalb 0.5s --- */
   let firstClipTime = 0;
 
   function pressClip(which) {
@@ -708,7 +923,6 @@ levelInits[5] = function () {
     if (now - firstClipTime <= CLIP_WINDOW_MS &&
         clipLeft.classList.contains('open') &&
         clipRight.classList.contains('open')) {
-      // Beide rechtzeitig offen
       phase = 3;
       slot.classList.add('armed');
       phaseLabel.textContent = 'Phase 3/3: Dreh den RAM richtig und steck ihn ein!';
@@ -716,7 +930,6 @@ levelInits[5] = function () {
       setDisplay(ramHint, true);
       flashGreen();
     } else {
-      // Zu langsam → zurücksetzen
       firstClipTime = now;
       clipLeft.classList.remove('open');
       clipRight.classList.remove('open');
@@ -728,8 +941,7 @@ levelInits[5] = function () {
   clipLeft.onclick = () => pressClip('left');
   clipRight.onclick = () => pressClip('right');
 
-  /* --- Phase 3: RAM einstecken (Tap = drehen, Drag = einsetzen) --- */
-  let ramRot = 0;        // 0 = korrekt, 180 = falsch
+  let ramRot = 0;
   let ramDone = false;
   let rsx = 0, rsy = 0;
   let ramMoved = false;
@@ -755,7 +967,6 @@ levelInits[5] = function () {
       if (phase !== 3 || ramDone) return;
       ram.classList.remove('dragging');
 
-      // TAP: Riegel rotieren
       if (!ramMoved) {
         ramRot = (ramRot + 180) % 360;
         ramInner.classList.toggle('rot', ramRot === 180);
@@ -773,7 +984,6 @@ levelInits[5] = function () {
           ram.style.transform = 'translate(0px, 0px)';
           return;
         }
-        // ERFOLG: korrekt eingesetzt
         ramDone = true;
         ramBaseX = 0; ramBaseY = 0;
         ram.style.transform = 'translate(0px, 0px)';
@@ -782,11 +992,10 @@ levelInits[5] = function () {
         slot.classList.add('filled');
         flickerScreen();
         showToast('16 GB erkannt. Der Rechner atmet auf. 🚀', 'good');
-        completeLevel(6);
+        completeLevel(8);
         return;
       }
 
-      // Daneben → zurück
       ramBaseX = 0; ramBaseY = 0;
       ram.style.transform = 'translate(0px, 0px)';
     },
@@ -794,9 +1003,9 @@ levelInits[5] = function () {
 };
 
 /* =========================================================
-   13. LEVEL 6 : DAS KAFFEE-QUIZ
+   15. LEVEL 8 : FACHWISSEN-CHECK
    ========================================================= */
-levelInits[6] = function () {
+levelInits[8] = function () {
   const reply = $('colleague-reply');
   setDisplay(reply, false);
   const buttons = document.querySelectorAll('.answer-btn');
@@ -809,10 +1018,10 @@ levelInits[6] = function () {
       if (btn.dataset.answer === 'HTML') {
         solved = true;
         btn.classList.add('correct');
-        confetti();
+        confetti(90);
         showToast('Korrekt! HTML ist eine Auszeichnungssprache. 🎉', 'good');
         gameState.won = true;
-        completeLevel(7);
+        completeLevel(9);
       } else {
         btn.classList.add('wrong');
         setDisplay(reply, true);
@@ -824,7 +1033,6 @@ levelInits[6] = function () {
 };
 
 /* =========================================================
-   14. BOOT
+   16. BOOT
    ========================================================= */
 updateHUD();
-// Level 0 ist per HTML-Default sichtbar (display:flex)

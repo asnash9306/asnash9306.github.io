@@ -1,6 +1,6 @@
 /* =========================================================
-   IT-SURVIVAL : Der 9-to-5 Simulator — Custom Styles
-   Hacker-Aesthetic / Mobile-First / 100vh Portrait
+   IT-SURVIVAL : Der 9-to-5 Simulator — Custom Styles v2
+   Redesign: Terminal-Panels, feinere Typo, Neon-Akzente
    ========================================================= */
 
 * {
@@ -12,13 +12,22 @@
   -webkit-user-select: none;
 }
 
+:root {
+  --neon: #00ff41;
+  --blue: #4fc3f7;
+  --pink: #ff2a6d;
+  --amber: #ffd54f;
+  --panel: rgba(3, 18, 9, 0.72);
+  --panel-border: rgba(0, 255, 65, 0.28);
+}
+
 html, body {
   width: 100vw;
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
   background: #000;
-  color: #00ff41;
+  color: var(--neon);
   font-family: 'Courier New', Courier, monospace;
   touch-action: manipulation;
   overscroll-behavior: none;
@@ -31,12 +40,12 @@ html, body {
   height: 100dvh;
   overflow: hidden;
   background:
-    radial-gradient(ellipse at 50% -10%, rgba(0, 90, 40, 0.28), transparent 60%),
-    radial-gradient(ellipse at 50% 115%, rgba(0, 60, 120, 0.22), transparent 55%),
+    radial-gradient(ellipse at 50% -10%, rgba(0, 90, 40, 0.30), transparent 60%),
+    radial-gradient(ellipse at 50% 115%, rgba(0, 60, 120, 0.24), transparent 55%),
     #000;
 }
 
-/* Scanline-Overlay für CRT-Feeling */
+/* Scanlines + Vignette für CRT-Feeling */
 #app::after {
   content: '';
   position: absolute;
@@ -52,6 +61,15 @@ html, body {
   z-index: 5;
 }
 
+#app::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
+  z-index: 4;
+}
+
 /* =========================================================
    HUD
    ========================================================= */
@@ -61,39 +79,42 @@ html, body {
   left: 0;
   right: 0;
   z-index: 40;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
-  background: rgba(0, 10, 4, 0.92);
-  border-bottom: 1px solid #00ff41;
-  box-shadow: 0 0 14px rgba(0, 255, 65, 0.25);
+  padding: 8px 12px 9px;
+  background: rgba(0, 10, 4, 0.94);
+  border-bottom: 1px solid var(--neon);
+  box-shadow: 0 0 14px rgba(0, 255, 65, 0.22);
   backdrop-filter: blur(3px);
 }
 
-.hud-item {
+.hud-top {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #6fdc94;
+  margin-bottom: 6px;
 }
 
-.hud-icon { font-size: 16px; width: 24px; text-align: center; }
+.hud-level { color: var(--blue); font-weight: bold; }
+.hud-task { color: #9df5bb; }
+.hud-clock { color: #4a6b56; }
+
+.hud-bars { display: flex; flex-direction: column; gap: 5px; }
+
+.hud-item { display: flex; align-items: center; gap: 8px; }
+.hud-icon { font-size: 15px; width: 22px; text-align: center; }
 
 .hud-bar {
   flex: 1;
-  height: 14px;
+  height: 12px;
   border: 1px solid #1a4d2e;
   background: #031008;
   border-radius: 3px;
   overflow: hidden;
-  position: relative;
 }
 
-.hud-fill {
-  height: 100%;
-  width: 100%;
-  transition: width 0.35s ease;
-}
+.hud-fill { height: 100%; width: 100%; transition: width 0.35s ease; }
 
 .fill-coffee {
   background: linear-gradient(90deg, #6f4e1e, #c98a2b, #ffd27a);
@@ -105,7 +126,7 @@ html, body {
   box-shadow: 0 0 8px rgba(255, 90, 60, 0.55);
 }
 
-.hud-value { font-size: 12px; width: 30px; text-align: right; color: #9df5bb; }
+.hud-value { font-size: 11px; width: 28px; text-align: right; color: #9df5bb; }
 
 .hud-fill.low-coffee  { animation: hudPulse 0.6s infinite alternate; }
 .hud-fill.low-patience { animation: hudPulse 0.45s infinite alternate; }
@@ -116,7 +137,7 @@ html, body {
 }
 
 /* =========================================================
-   LEVEL-CONTAINER (allgemein)
+   LEVEL-CONTAINER + PANELS
    ========================================================= */
 .level-container {
   position: absolute;
@@ -124,54 +145,64 @@ html, body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: 13px;
   padding: 16px;
-  padding-top: 16px;
   z-index: 10;
   text-align: center;
 }
 
-/* Wenn HUD sichtbar ist, Levels darunter schieben */
 #app.hud-on .level-container {
   justify-content: flex-start;
-  padding-top: 84px;
+  padding-top: 96px;
+  overflow-y: auto;
+}
+
+.panel-head {
+  width: 100%;
+  max-width: 360px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  box-shadow: 0 0 14px rgba(0, 255, 65, 0.10), inset 0 0 20px rgba(0, 0, 0, 0.35);
 }
 
 .level-title {
-  font-size: 20px;
-  letter-spacing: 2px;
-  color: #00ff41;
+  font-size: 17px;
+  letter-spacing: 3px;
+  color: var(--neon);
   text-shadow: 0 0 10px rgba(0, 255, 65, 0.7);
 }
 
 .level-title span {
   display: block;
-  font-size: 12px;
-  color: #4fc3f7;
+  font-size: 11px;
+  color: var(--blue);
   letter-spacing: 1px;
   margin-top: 2px;
 }
 
-.level-desc { font-size: 13px; color: #9df5bb; max-width: 320px; line-height: 1.5; }
+.level-desc { font-size: 12px; color: #9df5bb; line-height: 1.55; margin-top: 6px; }
 .level-desc b { color: #fff; }
-.mini-hint { font-size: 11px; color: #4fc3f7; opacity: 0.85; }
+.mini-hint { font-size: 11px; color: var(--blue); opacity: 0.85; }
+.mini-hint b { color: var(--amber); }
 
 /* =========================================================
    BUTTONS
    ========================================================= */
 .neon-btn {
   font-family: inherit;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: bold;
   letter-spacing: 2px;
-  color: #00ff41;
+  color: var(--neon);
   background: rgba(0, 255, 65, 0.06);
-  border: 2px solid #00ff41;
+  border: 2px solid var(--neon);
   border-radius: 6px;
-  padding: 14px 26px;
+  padding: 13px 24px;
   cursor: pointer;
   text-shadow: 0 0 8px rgba(0, 255, 65, 0.8);
-  box-shadow: 0 0 16px rgba(0, 255, 65, 0.35), inset 0 0 10px rgba(0, 255, 65, 0.12);
+  box-shadow: 0 0 16px rgba(0, 255, 65, 0.30), inset 0 0 10px rgba(0, 255, 65, 0.12);
   transition: transform 0.1s ease, background 0.2s ease;
   min-height: 48px;
 }
@@ -181,26 +212,37 @@ html, body {
 .pulse { animation: pulse 1.4s infinite; }
 
 @keyframes pulse {
-  0%, 100% { box-shadow: 0 0 16px rgba(0, 255, 65, 0.35), inset 0 0 10px rgba(0, 255, 65, 0.12); }
-  50%      { box-shadow: 0 0 34px rgba(0, 255, 65, 0.75), inset 0 0 18px rgba(0, 255, 65, 0.28); }
+  0%, 100% { box-shadow: 0 0 16px rgba(0, 255, 65, 0.30), inset 0 0 10px rgba(0, 255, 65, 0.12); }
+  50%      { box-shadow: 0 0 34px rgba(0, 255, 65, 0.72), inset 0 0 18px rgba(0, 255, 65, 0.28); }
 }
 
 /* =========================================================
    LEVEL 0 : START
    ========================================================= */
-.terminal-line {
-  font-size: 12px;
-  color: #4fc3f7;
+.boot-log {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: #4a8f63;
+  text-align: left;
   letter-spacing: 1px;
-  opacity: 0.9;
 }
+
+.boot-log span { opacity: 0; animation: bootLine 0.3s ease forwards; }
+.boot-log span:nth-child(1) { animation-delay: 0.1s; }
+.boot-log span:nth-child(2) { animation-delay: 0.35s; }
+.boot-log span:nth-child(3) { animation-delay: 0.6s; }
+.boot-log span:nth-child(4) { animation-delay: 0.85s; color: var(--blue); }
+
+@keyframes bootLine { to { opacity: 1; } }
 
 .glitch {
   position: relative;
-  font-size: 44px;
+  font-size: 42px;
   font-weight: bold;
   letter-spacing: 4px;
-  color: #00ff41;
+  color: var(--neon);
   text-shadow: 0 0 18px rgba(0, 255, 65, 0.8);
   animation: glitchShift 2.4s infinite steps(1);
 }
@@ -216,7 +258,7 @@ html, body {
 }
 
 .glitch::before {
-  color: #4fc3f7;
+  color: var(--blue);
   transform: translate(-2px, 0);
   clip-path: inset(20% 0 55% 0);
   animation: glitchClip 1.1s infinite steps(2);
@@ -224,7 +266,7 @@ html, body {
 }
 
 .glitch::after {
-  color: #ff2a6d;
+  color: var(--pink);
   transform: translate(2px, 0);
   clip-path: inset(60% 0 15% 0);
   animation: glitchClip 0.9s infinite steps(3) reverse;
@@ -247,171 +289,296 @@ html, body {
   100% { clip-path: inset(55% 0 20% 0); }
 }
 
-.subtitle { font-size: 14px; color: #4fc3f7; letter-spacing: 2px; }
+.subtitle { font-size: 14px; color: var(--blue); letter-spacing: 2px; }
 
-.start-hints { font-size: 12px; color: #9df5bb; line-height: 1.9; opacity: 0.8; }
-
-/* =========================================================
-   LEVEL 1 : HARDWARE-SETUP
-   ========================================================= */
-.hardware-stage {
+.start-hints {
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 6px;
+  font-size: 12px;
+  color: #9df5bb;
+  opacity: 0.85;
+}
+
+/* =========================================================
+   LEVEL 1 : PC-RÜCKSEITE (HDMI — realistisch)
+   ========================================================= */
+#pc-back {
   width: 100%;
-  max-width: 340px;
-  align-items: center;
-}
-
-.board {
+  max-width: 330px;
+  background: linear-gradient(155deg, #2c3136, #171a1d 70%);
+  border: 2px solid #454b52;
+  border-radius: 10px;
+  padding: 12px 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: inset 0 0 26px rgba(0, 0, 0, 0.65), 0 0 20px rgba(0, 0, 0, 0.5);
   position: relative;
-  width: 250px;
-  height: 96px;
-  background: linear-gradient(145deg, #3a3f44, #23272b);
-  border: 2px solid #565d64;
-  border-radius: 8px;
-  box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.6);
 }
 
-.board-label {
+/* Schrauben in den Ecken */
+#pc-back::before,
+#pc-back::after {
+  content: '✚';
   position: absolute;
-  top: 6px;
-  left: 10px;
-  font-size: 11px;
-  letter-spacing: 2px;
-  color: #b9c0c7;
+  font-size: 10px;
+  color: #565d64;
+  top: 4px;
 }
+#pc-back::before { left: 6px; }
+#pc-back::after { right: 6px; }
 
-.board-lines {
-  position: absolute;
-  inset: 24px 12px 12px 12px;
-  background: repeating-linear-gradient(
-    90deg,
-    rgba(120, 130, 140, 0.25) 0 2px,
-    transparent 2px 14px
-  );
-  border-radius: 4px;
-}
-
-.port {
-  position: absolute;
-  bottom: -14px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 70px;
-  height: 26px;
-  background: #10130f;
-  border: 2px solid #8a9199;
-  border-radius: 4px;
+/* --- Netzteil --- */
+.psu {
+  position: relative;
+  height: 74px;
+  background: linear-gradient(180deg, #22262a, #191d20);
+  border: 1px solid #3a4046;
+  border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 2;
 }
 
-.port span { font-size: 9px; letter-spacing: 1px; color: #8a9199; }
-.port.hot { border-color: #00ff41; box-shadow: 0 0 12px rgba(0, 255, 65, 0.6); }
-.port.hot span { color: #00ff41; }
-
-.board-gpu {
-  border-color: #00ff41;
-  box-shadow: 0 0 22px rgba(0, 255, 65, 0.35), inset 0 0 18px rgba(0, 80, 30, 0.5);
-  background: linear-gradient(145deg, #0d2b16, #05150a);
-}
-
-.gpu-label { color: #00ff41; text-shadow: 0 0 8px rgba(0, 255, 65, 0.8); }
-
-.fan {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -58%);
-  width: 52px;
-  height: 52px;
-  border: 2px solid #00ff41;
+.psu-fan {
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 255, 65, 0.06);
-}
-
-.fan-blades {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
+  border: 2px solid #3a4046;
   background:
-    conic-gradient(
-      rgba(0, 255, 65, 0.85) 0deg 30deg, transparent 30deg 60deg,
-      rgba(0, 255, 65, 0.85) 60deg 90deg, transparent 90deg 120deg,
-      rgba(0, 255, 65, 0.85) 120deg 150deg, transparent 150deg 180deg,
-      rgba(0, 255, 65, 0.85) 180deg 210deg, transparent 210deg 240deg,
-      rgba(0, 255, 65, 0.85) 240deg 270deg, transparent 270deg 300deg,
-      rgba(0, 255, 65, 0.85) 300deg 330deg, transparent 330deg 360deg
-    );
-  animation: spin 0.7s linear infinite;
+    radial-gradient(circle at center, #101315 30%, transparent 31%),
+    repeating-conic-gradient(#3a4046 0deg 12deg, #1b1f22 12deg 30deg);
 }
 
-@keyframes spin { to { transform: rotate(360deg); } }
+.psu-label {
+  position: absolute;
+  right: 10px;
+  bottom: 6px;
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: #565d64;
+}
+
+/* --- I/O-Panel (Mainboard) --- */
+.io-panel {
+  position: relative;
+  background: linear-gradient(180deg, #1e2226, #15181b);
+  border: 1px solid #3a4046;
+  border-radius: 6px;
+  padding: 16px 10px 10px;
+}
+
+.io-label {
+  position: absolute;
+  top: 4px;
+  left: 10px;
+  font-size: 8px;
+  letter-spacing: 2px;
+  color: #6b7c8a;
+}
+
+.io-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  justify-items: center;
+}
+
+.io-port {
+  position: relative;
+  background: #0c0e10;
+  border: 1px solid #4a5158;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.io-usb { width: 52px; height: 20px; }
+.io-usb i {
+  width: 18px;
+  height: 10px;
+  background: #0d47a1;
+  border-radius: 1px;
+  box-shadow: inset 0 0 3px #000;
+}
+
+.io-lan { width: 44px; height: 24px; }
+.io-lan i {
+  width: 30px;
+  height: 6px;
+  background: repeating-linear-gradient(90deg, #c9a227 0 3px, #0c0e10 3px 5px);
+  border-radius: 1px;
+}
+
+.io-audio { width: 52px; height: 20px; border: none; background: transparent; }
+.io-audio i {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid #4a5158;
+}
+.io-audio .au-g { background: #2e7d32; }
+.io-audio .au-p { background: #ad1457; }
+.io-audio .au-b { background: #1565c0; }
+
+/* HDMI am Mainboard (die Falle!) */
+.io-hdmi { width: 52px; height: 24px; }
+.io-vga  { width: 52px; height: 26px; }
+.io-vga i {
+  width: 40px;
+  height: 16px;
+  background:
+    radial-gradient(circle, #0c0e10 1.4px, transparent 1.6px) 0 0 / 8px 5.3px,
+    #1a237e;
+  border-radius: 3px 3px 5px 5px;
+  border: 1px solid #283593;
+}
+
+/* HDMI-Buchsen-Form (Mainboard + GPU) */
+.io-hdmi i,
+.gpu-hdmi i {
+  width: 38px;
+  height: 14px;
+  background: linear-gradient(180deg, #0a0c0e 40%, #1c2126 40%);
+  border: 1px solid #5c646c;
+  border-radius: 3px;
+  clip-path: polygon(0 0, 100% 0, 100% 62%, 84% 100%, 16% 100%, 0 62%);
+  box-shadow: inset 0 0 4px #000;
+}
+
+/* --- PCIe-Blenden + GPU --- */
+.pcie-area { display: flex; flex-direction: column; gap: 7px; }
+
+.pcie-slot {
+  height: 34px;
+  background: repeating-linear-gradient(90deg, #23272b 0 10px, #1b1f22 10px 20px);
+  border: 1px solid #3a4046;
+  border-radius: 4px;
+  position: relative;
+}
+
+.pcie-slot.empty::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #101315;
+  border: 1px solid #3a4046;
+}
+
+.pcie-slot.gpu {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 10px;
+  background: linear-gradient(180deg, #20262b, #16191c);
+  border-color: #4a5158;
+  height: 46px;
+}
+
+.gpu-label {
+  margin-right: auto;
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--neon);
+  text-shadow: 0 0 6px rgba(0, 255, 65, 0.7);
+}
+
+.gpu-port { background: #0c0e10; border: 1px solid #4a5158; border-radius: 3px; display: flex; align-items: center; justify-content: center; }
+.gpu-hdmi { width: 50px; height: 24px; }
+.gpu-dp {
+  width: 34px;
+  height: 20px;
+  clip-path: polygon(0 0, 100% 0, 100% 78%, 82% 100%, 0 100%);
+}
+
+/* Hot-States bei Drop-Nähe / Erfolg */
+.io-hdmi.hot, .gpu-hdmi.hot { border-color: var(--neon); box-shadow: 0 0 12px rgba(0, 255, 65, 0.7); }
+.io-hdmi.trap-glow { border-color: #ff8a65; box-shadow: 0 0 10px rgba(255, 138, 101, 0.5); }
 
 /* --- HDMI-Kabel --- */
+#cable-tray {
+  width: 100%;
+  max-width: 330px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+
 .cable {
-  width: 90px;
-  height: 110px;
+  width: 86px;
+  height: 104px;
   position: relative;
   cursor: grab;
   touch-action: none;
   z-index: 30;
+  perspective: 300px;
 }
 
 .cable-inner {
   width: 100%;
   height: 100%;
-  transition: transform 0.28s ease;
+  transition: transform 0.3s ease;
+  transform-style: preserve-3d;
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 
-.cable-inner.flip-1 { transform: rotate(180deg); }
-.cable-inner.flip-2 { transform: rotate(360deg); }
+.cable-inner.flip-1 { transform: rotateY(180deg); }
+.cable-inner.flip-2 { transform: rotateY(360deg); }
 
-.plug {
+.plug-head {
+  width: 34px;
+  height: 16px;
+  background: linear-gradient(180deg, #d7dde3, #9aa2aa);
+  clip-path: polygon(0 0, 100% 0, 88% 100%, 12% 100%);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.plug-pins {
+  width: 22px;
+  height: 5px;
+  margin-bottom: 2px;
+  background: repeating-linear-gradient(90deg, #ffd54f 0 2px, #8a6d1f 2px 4px);
+}
+
+.plug-body {
   width: 46px;
-  height: 30px;
-  background: linear-gradient(180deg, #c0c7ce, #7d848c);
-  border: 2px solid #565d64;
-  border-radius: 5px 5px 2px 2px;
-  position: relative;
-  box-shadow: 0 0 10px rgba(79, 195, 247, 0.4);
+  height: 26px;
+  background: linear-gradient(180deg, #2b3138, #14181c);
+  border: 1px solid #4a5158;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 10px rgba(79, 195, 247, 0.35);
 }
 
-.plug::after {
-  content: '';
-  position: absolute;
-  bottom: -8px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 30px;
-  height: 8px;
-  background: #ffd54f;
-  border-radius: 0 0 3px 3px;
-}
+.plug-body span { font-size: 8px; letter-spacing: 1px; color: #8fa3b3; }
 
 .cord {
   width: 12px;
   flex: 1;
-  background: repeating-linear-gradient(
-    180deg,
-    #1e88e5 0 8px,
-    #0d47a1 8px 16px
-  );
+  background: repeating-linear-gradient(180deg, #1e88e5 0 8px, #0d47a1 8px 16px);
   border-radius: 6px;
   box-shadow: 0 0 8px rgba(30, 136, 229, 0.6);
 }
 
-.cable.dragging { opacity: 0.9; cursor: grabbing; z-index: 60; }
-.cable.dock .plug { box-shadow: 0 0 16px rgba(0, 255, 65, 0.9); }
+.cable.dragging { opacity: 0.92; cursor: grabbing; z-index: 60; }
+.cable.dock .plug-body { box-shadow: 0 0 16px rgba(0, 255, 65, 0.9); }
 
 /* =========================================================
    LEVEL 2 : TICKET-TINDER
@@ -426,7 +593,7 @@ html, body {
   position: absolute;
   inset: 0;
   background: linear-gradient(160deg, #0b1f12, #05110a);
-  border: 2px solid #00ff41;
+  border: 2px solid var(--neon);
   border-radius: 12px;
   padding: 22px 18px;
   display: flex;
@@ -434,14 +601,14 @@ html, body {
   align-items: center;
   justify-content: center;
   gap: 12px;
-  box-shadow: 0 0 20px rgba(0, 255, 65, 0.25);
+  box-shadow: 0 0 20px rgba(0, 255, 65, 0.22);
   touch-action: none;
   cursor: grab;
   transition: transform 0.25s ease, opacity 0.25s ease;
   will-change: transform;
 }
 
-.ticket-card .ticket-id { font-size: 11px; color: #4fc3f7; letter-spacing: 2px; }
+.ticket-card .ticket-id { font-size: 11px; color: var(--blue); letter-spacing: 2px; }
 .ticket-card .ticket-emoji { font-size: 46px; }
 .ticket-card .ticket-text { font-size: 16px; color: #e6ffe9; line-height: 1.45; }
 
@@ -458,7 +625,7 @@ html, body {
   opacity: 0;
 }
 
-.ticket-card .stamp-ok { right: 12px; color: #00ff41; border-color: #00ff41; transform: rotate(12deg); }
+.ticket-card .stamp-ok { right: 12px; color: var(--neon); border-color: var(--neon); transform: rotate(12deg); }
 .ticket-card .stamp-no { left: 12px; color: #ff5252; border-color: #ff5252; transform: rotate(-12deg); }
 
 .swipe-labels {
@@ -472,7 +639,7 @@ html, body {
 }
 
 .swipe-label.left { color: #ff8a65; }
-.swipe-label.right { color: #4fc3f7; }
+.swipe-label.right { color: var(--blue); }
 
 /* =========================================================
    LEVEL 3 : PASSWORT-PING-PONG
@@ -482,7 +649,7 @@ html, body {
   width: 100%;
   max-width: 320px;
   height: 22px;
-  border: 1px solid #4fc3f7;
+  border: 1px solid var(--blue);
   border-radius: 4px;
   background: #020a12;
   overflow: hidden;
@@ -491,7 +658,7 @@ html, body {
 #timer-fill {
   height: 100%;
   width: 100%;
-  background: linear-gradient(90deg, #0d47a1, #4fc3f7);
+  background: linear-gradient(90deg, #0d47a1, var(--blue));
   box-shadow: 0 0 10px rgba(79, 195, 247, 0.6);
   transition: width 0.2s linear;
 }
@@ -514,14 +681,14 @@ html, body {
   max-width: 320px;
   font-family: inherit;
   font-size: 17px;
-  color: #00ff41;
+  color: var(--neon);
   background: #020a12;
-  border: 2px solid #4fc3f7;
+  border: 2px solid var(--blue);
   border-radius: 6px;
   padding: 13px 14px;
   outline: none;
   text-align: center;
-  caret-color: #00ff41;
+  caret-color: var(--neon);
   user-select: text;
   -webkit-user-select: text;
 }
@@ -562,15 +729,15 @@ html, body {
 }
 
 .rule.ok {
-  color: #00ff41;
-  border-color: #00ff41;
+  color: var(--neon);
+  border-color: var(--neon);
   background: rgba(0, 255, 65, 0.08);
   text-shadow: 0 0 6px rgba(0, 255, 65, 0.5);
 }
 
 .rule.ok .box {
-  border-color: #00ff41;
-  background: #00ff41;
+  border-color: var(--neon);
+  background: var(--neon);
   box-shadow: 0 0 10px rgba(0, 255, 65, 0.8);
 }
 
@@ -646,31 +813,218 @@ html, body {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #00ff41;
+  background: var(--neon);
   pointer-events: none;
   z-index: 8;
   animation: particleFly 0.55s ease-out forwards;
 }
 
 @keyframes particleFly {
-  to {
-    transform: translate(var(--dx), var(--dy)) scale(0.2);
-    opacity: 0;
-  }
+  to { transform: translate(var(--dx), var(--dy)) scale(0.2); opacity: 0; }
 }
 
 /* =========================================================
-   LEVEL 5 : RAM-UPGRADE
+   LEVEL 5 : LOG-ANALYSE (neu)
+   ========================================================= */
+#log-terminal {
+  width: 100%;
+  max-width: 360px;
+  height: 340px;
+  background: #020a05;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.6), 0 0 14px rgba(0, 255, 65, 0.10);
+}
+
+.term-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: #6fdc94;
+  background: rgba(0, 255, 65, 0.05);
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.term-head .dot { width: 9px; height: 9px; border-radius: 50%; background: #2f7a45; }
+.term-head .dot:nth-child(1) { background: #ff5f57; }
+.term-head .dot:nth-child(2) { background: #febc2e; }
+.term-head .dot:nth-child(3) { background: #28c840; }
+
+#log-lines {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  overflow: hidden;
+  padding: 10px;
+}
+
+.log-line {
+  font-size: 11px;
+  text-align: left;
+  letter-spacing: 0.5px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  touch-action: none;
+  animation: logIn 0.2s ease;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  position: relative;
+}
+
+@keyframes logIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.log-line .lt { color: #4a6b56; }
+.log-line .lv { font-weight: bold; }
+
+.log-line.info { color: #7fb894; background: rgba(0, 255, 65, 0.03); }
+.log-line.info .lv { color: #57a06d; }
+
+.log-line.warn { color: #e0c070; background: rgba(255, 213, 79, 0.05); }
+.log-line.warn .lv { color: var(--amber); }
+
+.log-line.err {
+  color: #ff9d94;
+  background: rgba(255, 82, 82, 0.08);
+  border-color: rgba(255, 82, 82, 0.35);
+}
+.log-line.err .lv { color: #ff5252; text-shadow: 0 0 6px rgba(255, 82, 82, 0.6); }
+
+.log-line.caught {
+  border-color: var(--neon);
+  background: rgba(0, 255, 65, 0.14);
+  color: var(--neon);
+}
+
+.log-line.caught::after {
+  content: '✔ GEFIXT';
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 9px;
+  font-weight: bold;
+  color: var(--neon);
+}
+
+.log-line.miss { animation: logShake 0.35s ease; }
+
+@keyframes logShake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+
+/* =========================================================
+   LEVEL 6 : KAFFEE-NOTFALL (neu)
+   ========================================================= */
+.machine {
+  width: 100%;
+  max-width: 300px;
+  background: linear-gradient(170deg, #3a2c18, #241a0c);
+  border: 2px solid #8a6d1f;
+  border-radius: 14px;
+  padding: 14px 16px 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  box-shadow: 0 0 22px rgba(201, 138, 43, 0.25), inset 0 0 24px rgba(0, 0, 0, 0.5);
+}
+
+.machine-top {
+  font-size: 13px;
+  letter-spacing: 3px;
+  color: var(--amber);
+  text-shadow: 0 0 8px rgba(255, 213, 79, 0.6);
+  border-bottom: 1px dashed #8a6d1f;
+  width: 100%;
+  padding-bottom: 8px;
+}
+
+.cup-zone { position: relative; padding-top: 26px; }
+
+.zone-mark {
+  position: absolute;
+  left: -12px;
+  right: -12px;
+  top: 40px;
+  height: 20px;
+  border-top: 2px dashed rgba(0, 255, 65, 0.75);
+  border-bottom: 2px dashed rgba(0, 255, 65, 0.75);
+  background: rgba(0, 255, 65, 0.08);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.cup {
+  position: relative;
+  width: 110px;
+  height: 140px;
+  border: 3px solid #c98a2b;
+  border-top: none;
+  border-radius: 0 0 24px 24px;
+  background: rgba(20, 12, 4, 0.65);
+  overflow: hidden;
+}
+
+#coffee-liquid {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 10%;
+  background: linear-gradient(180deg, #a86f24, #5c3d14);
+  box-shadow: 0 -2px 10px rgba(255, 210, 122, 0.5);
+}
+
+#btn-brew {
+  width: 220px;
+  height: 68px;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  color: #1a0f02;
+  background: linear-gradient(180deg, #ffd54f, #c98a2b);
+  border: 3px solid #8a6d1f;
+  border-radius: 12px;
+  cursor: pointer;
+  touch-action: none;
+  box-shadow: 0 6px 0 #6f5410, 0 0 22px rgba(255, 213, 79, 0.35);
+  transition: transform 0.05s ease, box-shadow 0.05s ease;
+}
+
+#btn-brew.brewing {
+  transform: translateY(4px);
+  box-shadow: 0 2px 0 #6f5410, 0 0 34px rgba(255, 213, 79, 0.7);
+}
+
+/* =========================================================
+   LEVEL 7 : RAM-UPGRADE
    ========================================================= */
 #clean-area {
   position: relative;
   width: 100%;
   max-width: 340px;
   height: 260px;
-  border: 2px solid #00ff41;
+  border: 2px solid var(--neon);
   border-radius: 10px;
   background: linear-gradient(150deg, #0b2413, #04150a);
-  box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.55), 0 0 18px rgba(0, 255, 65, 0.2);
+  box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.55), 0 0 18px rgba(0, 255, 65, 0.18);
   overflow: hidden;
   touch-action: none;
 }
@@ -691,8 +1045,8 @@ html, body {
   justify-content: center;
 }
 
-#slot.armed { border-color: #4fc3f7; box-shadow: 0 0 16px rgba(79, 195, 247, 0.5), inset 0 0 12px rgba(0,0,0,0.8); }
-#slot.filled { border-color: #00ff41; box-shadow: 0 0 20px rgba(0, 255, 65, 0.8), inset 0 0 12px rgba(0, 60, 20, 0.8); }
+#slot.armed { border-color: var(--blue); box-shadow: 0 0 16px rgba(79, 195, 247, 0.5), inset 0 0 12px rgba(0,0,0,0.8); }
+#slot.filled { border-color: var(--neon); box-shadow: 0 0 20px rgba(0, 255, 65, 0.8), inset 0 0 12px rgba(0, 60, 20, 0.8); }
 
 .slot-notch {
   position: absolute;
@@ -721,9 +1075,9 @@ html, body {
   height: 64px;
   font-size: 20px;
   font-family: inherit;
-  color: #00ff41;
+  color: var(--neon);
   background: #0a1c10;
-  border: 2px solid #00ff41;
+  border: 2px solid var(--neon);
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -731,7 +1085,7 @@ html, body {
 }
 
 .clip:disabled { opacity: 0.35; border-color: #3a5244; color: #3a5244; cursor: default; }
-.clip.open { background: #00ff41; color: #000; box-shadow: 0 0 14px rgba(0, 255, 65, 0.8); }
+.clip.open { background: var(--neon); color: #000; box-shadow: 0 0 14px rgba(0, 255, 65, 0.8); }
 #clip-left { left: 10px; }
 #clip-right { right: 10px; }
 
@@ -763,7 +1117,7 @@ html, body {
   width: 100%;
   height: 100%;
   background: linear-gradient(180deg, #0a3d1c, #062a12);
-  border: 2px solid #00ff41;
+  border: 2px solid var(--neon);
   border-radius: 6px;
   position: relative;
   transition: transform 0.25s ease;
@@ -790,14 +1144,14 @@ html, body {
   text-align: center;
   font-size: 10px;
   letter-spacing: 2px;
-  color: #00ff41;
+  color: var(--neon);
 }
 
 .ram-inner.rot { transform: rotate(180deg); }
 .ram.dragging { opacity: 0.9; cursor: grabbing; z-index: 60; }
 
 /* =========================================================
-   LEVEL 6 : KAFFEE-QUIZ
+   LEVEL 8 : KAFFEE-QUIZ
    ========================================================= */
 .chat {
   width: 100%;
@@ -819,7 +1173,7 @@ html, body {
 .bubble.colleague {
   align-self: flex-start;
   background: #0d2233;
-  border: 1px solid #4fc3f7;
+  border: 1px solid var(--blue);
   color: #d8f1ff;
   border-bottom-left-radius: 2px;
   box-shadow: 0 0 12px rgba(79, 195, 247, 0.2);
@@ -828,7 +1182,7 @@ html, body {
 .bubble.reply {
   align-self: flex-start;
   background: #22112b;
-  border: 1px solid #ff2a6d;
+  border: 1px solid var(--pink);
   color: #ffd3e2;
   border-bottom-left-radius: 2px;
   animation: iconPop 0.25s ease;
@@ -847,9 +1201,9 @@ html, body {
   font-size: 17px;
   font-weight: bold;
   letter-spacing: 1px;
-  color: #4fc3f7;
+  color: var(--blue);
   background: rgba(79, 195, 247, 0.06);
-  border: 2px solid #4fc3f7;
+  border: 2px solid var(--blue);
   border-radius: 8px;
   padding: 16px 10px;
   cursor: pointer;
@@ -858,17 +1212,17 @@ html, body {
 }
 
 .answer-btn:active { transform: scale(0.94); }
-.answer-btn.correct { background: #00ff41; color: #000; border-color: #00ff41; box-shadow: 0 0 18px rgba(0, 255, 65, 0.8); }
-.answer-btn.wrong { background: #ff5252; color: #fff; border-color: #ff5252; animation: shake 0.4s ease; }
+.answer-btn.correct { background: var(--neon); color: #000; border-color: var(--neon); box-shadow: 0 0 18px rgba(0, 255, 65, 0.8); }
+.answer-btn.wrong { background: #ff5252; color: #fff; border-color: #ff5252; animation: ansShake 0.4s ease; }
 
-@keyframes shake {
+@keyframes ansShake {
   0%, 100% { transform: translateX(0); }
   25% { transform: translateX(-6px); }
   75% { transform: translateX(6px); }
 }
 
 /* =========================================================
-   LEVEL 7 : FEIERABEND
+   LEVEL 9 : FEIERABEND
    ========================================================= */
 .punch-card {
   width: 100%;
@@ -929,7 +1283,7 @@ html, body {
 }
 
 #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
-#toast.good { color: #00ff41; border-color: #00ff41; background: rgba(0, 20, 6, 0.94); box-shadow: 0 0 18px rgba(0, 255, 65, 0.4); }
+#toast.good { color: var(--neon); border-color: var(--neon); background: rgba(0, 20, 6, 0.94); box-shadow: 0 0 18px rgba(0, 255, 65, 0.4); }
 
 #flash-red, #flash-green, #flicker {
   position: fixed;
@@ -963,7 +1317,6 @@ html, body {
   100% { opacity: 0; }
 }
 
-/* --- Blue Screen of Death --- */
 #bsod {
   position: fixed;
   inset: 0;
@@ -983,7 +1336,6 @@ html, body {
 .bsod-face { font-size: 64px; margin-bottom: 12px; }
 .bsod-code { margin-top: 14px; font-size: 11px; opacity: 0.8; }
 
-/* --- Konfetti --- */
 #confetti-layer {
   position: fixed;
   inset: 0;
@@ -1006,15 +1358,14 @@ html, body {
 }
 
 /* =========================================================
-   REDUCED MOTION
+   REDUCED MOTION + größere Viewports
    ========================================================= */
 @media (prefers-reduced-motion: reduce) {
-  .pulse, .fan-blades, .glitch, .glitch::before, .glitch::after { animation: none; }
+  .pulse, .glitch, .glitch::before, .glitch::after, .boot-log span { animation: none; opacity: 1; }
   .cable-inner, .hud-fill, .ticket-card { transition: none; }
 }
 
-/* Größere Viewports: leicht hochskalieren */
-@media (min-height: 760px) {
-  .glitch { font-size: 52px; }
+@media (min-height: 780px) {
+  .glitch { font-size: 50px; }
   #card-stack { height: 330px; }
 }
