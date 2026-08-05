@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#090d18">
+  <meta name="description" content="IT-SURVIVAL: Der 9-to-5 Simulator – ein story-getriebenes Retro-Browsergame.">
+  <title>IT-SURVIVAL: Der 9-to-5 Simulator</title>
+  <link rel="stylesheet" href="./style.css">
+  <script defer src="./characters.js"></script>
+  <script defer src="./story.js"></script>
+  <script defer src="./minigames.js"></script>
+  <script defer src="./game.js"></script>
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <div class="scanlines" aria-hidden="true"></div>
+    <div id="fx-layer" class="fx-layer" aria-hidden="true"></div>
+
+    <section id="start-screen" class="screen start-screen" aria-labelledby="game-title">
+      <div class="boot-window">
+        <div class="window-bar">
+          <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>NERDDESK OS // ACME-GMBH</span>
+          <button id="start-mute" class="icon-button" type="button" aria-label="Ton ausschalten" title="Ton umschalten">🔊</button>
+        </div>
+        <div class="boot-content">
+          <p class="eyebrow">PERSONALAKTE #09–17 · ERSTER ARBEITSTAG</p>
+          <h1 id="game-title"><span>IT-SURVIVAL</span><small>Der 9-to-5 Simulator</small></h1>
+          <p class="hero-copy">Root ist krank. Der Drucker lügt. Du bist heute die gesamte IT-Abteilung.</p>
+
+          <div class="character-parade" aria-label="Die Belegschaft der ACME GmbH">
+            <canvas data-character="brumm" data-mood="neutral" aria-label="Chef Brumm"></canvas>
+            <canvas data-character="kevin" data-mood="happy" aria-label="Kevin aus dem Marketing"></canvas>
+            <canvas data-character="jana" data-mood="neutral" aria-label="Jana, Praktikantin"></canvas>
+            <canvas data-character="kalk" data-mood="neutral" aria-label="Frau Kalk aus der Buchhaltung"></canvas>
+            <canvas data-character="mogel" data-mood="neutral" aria-label="Mogel aus dem Vertrieb"></canvas>
+            <canvas data-character="root" data-mood="neutral" aria-label="Root, der Sysadmin"></canvas>
+          </div>
+
+          <div class="boot-terminal" aria-label="Systemmeldung">
+            <span class="prompt">&gt;</span>
+            <span id="boot-line">sysadmin.status = "KRANK";</span><span class="cursor" aria-hidden="true"></span>
+          </div>
+
+          <div class="start-actions">
+            <button id="start-button" class="primary-button big-button" type="button">
+              <span>ARBEITSTAG STARTEN</span><kbd>ENTER</kbd>
+            </button>
+            <p>Touch oder Maus · ca. 8–12 Minuten · Ton-Einstellung wird lokal gespeichert</p>
+          </div>
+
+          <div class="boot-footer">
+            <span><b>MISSION</b> 09:00 → 17:00 überleben</span>
+            <span><b>WARNUNG</b> Kaffee ist eine Ressource</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="game-shell" class="game-shell" hidden aria-label="Spielbereich">
+      <header class="hud">
+        <div class="hud-brand" aria-label="IT-Survival">
+          <span class="brand-mark">IT</span>
+          <span class="brand-copy"><b>SURVIVAL</b><small id="phase-label">MORGENSCHICHT</small></span>
+        </div>
+
+        <div class="resource resource-coffee">
+          <div class="resource-label"><span>☕ KAFFEE</span><output id="coffee-value">100</output></div>
+          <div class="meter" role="progressbar" aria-label="Kaffee-Level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+            <i id="coffee-bar"></i>
+          </div>
+        </div>
+
+        <div class="resource resource-patience">
+          <div class="resource-label"><span>😡 BRUMM</span><output id="patience-value">100</output></div>
+          <div class="meter" role="progressbar" aria-label="Boss-Geduld" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+            <i id="patience-bar"></i>
+          </div>
+        </div>
+
+        <div class="clock-card" aria-label="In-Game-Uhrzeit">
+          <span id="clock">09:00</span>
+          <small id="quest-counter">0/10 GELÖST</small>
+        </div>
+
+        <button id="hud-mute" class="icon-button hud-button" type="button" aria-label="Ton ausschalten" title="Ton umschalten">🔊</button>
+      </header>
+
+      <main id="main-stage" class="main-stage" tabindex="-1"></main>
+      <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+    </section>
+
+    <section id="end-screen" class="screen end-screen" hidden aria-labelledby="ending-title"></section>
+
+    <div id="dialogue-layer" class="dialogue-layer" hidden role="dialog" aria-modal="true" aria-labelledby="dialogue-name">
+      <div class="dialogue-box">
+        <div class="dialogue-meta">
+          <span id="dialogue-time">09:00</span>
+          <span id="dialogue-step">1 / 2</span>
+        </div>
+        <div class="dialogue-row">
+          <div class="portrait-frame large">
+            <canvas id="dialogue-portrait" data-character="brumm" data-mood="neutral" aria-hidden="true"></canvas>
+            <span id="dialogue-mood" class="mood-badge">😐</span>
+          </div>
+          <div id="dialogue-bubble" class="speech-bubble">
+            <strong id="dialogue-name">CHEF BRUMM</strong>
+            <p id="dialogue-text"></p>
+          </div>
+        </div>
+        <button id="dialogue-next" class="primary-button dialogue-next" type="button">WEITER <span>›</span></button>
+      </div>
+    </div>
+
+    <div id="bsod-overlay" class="bsod-overlay" hidden aria-live="assertive">
+      <div>
+        <b>:(</b>
+        <p>Dein PC hat ein Problem festgestellt.<br><small>Ursache: SYSTEMDATEI_WEGGEKLICKT</small></p>
+      </div>
+    </div>
+
+    <noscript>
+      <div class="noscript">Dieses Büro benötigt JavaScript. Root wäre enttäuscht.</div>
+    </noscript>
+  </div>
+</body>
+</html>
