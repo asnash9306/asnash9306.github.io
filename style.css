@@ -1,0 +1,180 @@
+/* ============================================================
+   IT-Survival: Der 9-to-5 Simulator - style.css
+   Mobile-first, dark hacker aesthetic
+   ============================================================ */
+
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* -- LEVEL VISIBILITY -- */
+.level-container {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+}
+.level-container.active { display: flex; }
+
+/* -- TOAST -- */
+.toast-hidden  { opacity: 0;  pointer-events: none; transition: opacity 0.25s; }
+.toast-visible { opacity: 1;  pointer-events: none; transition: opacity 0.25s; }
+
+/* -- GLITCH TITLE -- */
+.glitch { position: relative; display: inline-block; }
+.glitch::before,
+.glitch::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  pointer-events: none;
+}
+.glitch::before {
+  color: #00ffff;
+  clip-path: polygon(0 0, 100% 0, 100% 38%, 0 38%);
+  animation: glitch-top 3s infinite;
+}
+.glitch::after {
+  color: #ff00ff;
+  clip-path: polygon(0 62%, 100% 62%, 100% 100%, 0 100%);
+  animation: glitch-bot 4s infinite;
+}
+@keyframes glitch-top {
+  0%,79%,100% { transform: translateX(0) skewX(0deg); }
+  80%          { transform: translateX(-5px) skewX(-2deg); }
+  85%          { transform: translateX(4px) skewX(1deg); }
+  90%          { transform: translateX(-2px) skewX(0deg); }
+}
+@keyframes glitch-bot {
+  0%,74%,100% { transform: translateX(0) skewX(0deg); }
+  75%          { transform: translateX(5px) skewX(2deg); }
+  82%          { transform: translateX(-3px) skewX(-1deg); }
+  88%          { transform: translateX(2px) skewX(0deg); }
+}
+
+/* -- PULSE BUTTON -- */
+.pulse-btn { animation: pulse-glow 2s ease-in-out infinite; }
+@keyframes pulse-glow {
+  0%,100% { box-shadow: 0 0 0 0   rgba(74,222,128,0.6); }
+  50%      { box-shadow: 0 0 0 14px rgba(74,222,128,0); }
+}
+
+/* -- GPU FANS -- */
+.fan  { animation: spin 1.4s linear infinite; display: inline-block; }
+.fan2 { animation: spin 2s   linear infinite; display: inline-block; }
+.fan3 { animation: spin 1.8s linear reverse infinite; display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* -- HDMI CABLE -- */
+.hdmi-cable {
+  transition: transform 0.35s cubic-bezier(.36,.07,.19,.97), box-shadow 0.2s;
+  will-change: transform;
+}
+.hdmi-cable:active { box-shadow: 0 0 12px rgba(234,179,8,0.6); }
+
+/* -- TICKET CARDS -- */
+.ticket-card {
+  position: absolute;
+  inset: 0;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 14px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  cursor: grab;
+  will-change: transform;
+  transform-origin: center bottom;
+  transition: background 0.15s;
+  touch-action: none;
+}
+.ticket-card:active { cursor: grabbing; }
+.ticket-card .t-priority { font-size: 10px; letter-spacing: 0.08em; }
+.ticket-card .t-text     { font-size: 14px; color: #d1fae5; line-height: 1.5; }
+.ticket-card .t-id       { font-size: 10px; color: #374151; }
+
+.swipe-left-anim  { animation: swipe-left  0.35s ease-in forwards; }
+.swipe-right-anim { animation: swipe-right 0.35s ease-in forwards; }
+@keyframes swipe-left  { to { transform: translateX(-130vw) rotate(-28deg); opacity: 0; } }
+@keyframes swipe-right { to { transform: translateX( 130vw) rotate( 28deg); opacity: 0; } }
+
+/* -- PASSWORD RULES -- */
+.rule-item { transition: color 0.25s; }
+.rule-item .rule-icon { display: inline-block; font-size: 0; min-width: 14px; }
+.rule-item .rule-icon::before { font-size: 14px; }
+.rule-item:not(.ok) .rule-icon::before { content: '\2610'; }
+.rule-item.ok       .rule-icon::before { content: '\2611'; }
+.rule-item.ok { color: #4ade80; }
+
+/* -- DESKTOP ICONS -- */
+.desktop-icon {
+  position: absolute;
+  font-size: 30px;
+  cursor: pointer;
+  animation: icon-pop 0.18s ease-out both;
+  z-index: 2;
+  touch-action: manipulation;
+  line-height: 1;
+  padding: 4px;
+}
+@keyframes icon-pop {
+  from { transform: scale(0) rotate(-15deg); opacity: 0; }
+  to   { transform: scale(1) rotate(0deg);   opacity: 1; }
+}
+.icon-kill { animation: icon-kill 0.3s ease-out forwards !important; }
+@keyframes icon-kill { to { transform: scale(2); opacity: 0; } }
+
+/* -- PARTICLES -- */
+.particle {
+  position: fixed;
+  pointer-events: none;
+  font-size: 14px;
+  animation: particle-up 0.55s ease-out forwards;
+  z-index: 9999;
+}
+@keyframes particle-up {
+  to { transform: translateY(-50px) scale(0.3); opacity: 0; }
+}
+
+/* -- FLASH -- */
+#flash { transition: none; pointer-events: none; }
+.flash-success { background: rgba(74,222,128,0.30) !important; animation: flash-fade 0.55s ease-out forwards; }
+.flash-error   { background: rgba(239,68,68,0.40)  !important; animation: flash-fade 0.45s ease-out forwards; }
+@keyframes flash-fade {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* -- RAM -- */
+.ram-stick { transition: transform 0.3s ease, box-shadow 0.2s; will-change: transform; }
+.ram-stick:active { box-shadow: 0 0 10px rgba(74,222,128,0.5); }
+#ram-slot.slot-ready { border-color: #4ade80; box-shadow: 0 0 10px rgba(74,222,128,0.4); }
+
+/* -- CONFETTI -- */
+.confetti-bit {
+  position: absolute;
+  width: 9px; height: 9px;
+  border-radius: 2px;
+  opacity: 0;
+  animation: conf-fall var(--dur, 1.4s) var(--delay, 0s) ease-in forwards;
+}
+@keyframes conf-fall {
+  0%   { opacity: 1; transform: translateY(0)      rotate(0deg);   }
+  100% { opacity: 0; transform: translateY(105vh) rotate(720deg); }
+}
+
+/* -- HUD bar transitions -- */
+#bar-coffee { transition: width 0.6s ease, background 0.6s ease; }
+#bar-boss   { transition: width 0.6s ease; }
+
+/* -- Safe area notch support -- */
+@supports (padding-top: env(safe-area-inset-top)) {
+  #hud { padding-top: calc(0.5rem + env(safe-area-inset-top)); }
+}
