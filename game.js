@@ -1,1038 +1,469 @@
-/* =========================================================
-   IT-SURVIVAL : Der 9-to-5 Simulator — Game Logic v2
-   10 Screens: 0 Start · 1 HDMI · 2 Tickets · 3 Passwort ·
-   4 Viren · 5 Logs · 6 Kaffee · 7 RAM · 8 Quiz · 9 Ende
-   ========================================================= */
+/* IT-SURVIVAL — State-Machine, Scheduler, HUD, Audio und Endings. */
+(() => {
+  "use strict";
 
-'use strict';
+  const Story = window.ITStory;
+  const Characters = window.ITCharacters;
+  const Minigames = window.ITMinigames;
+  const $ = (selector, root = document) => root.querySelector(selector);
+  const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
-/* =========================================================
-   1. GLOBAL STATE
-   ========================================================= */
-const gameState = {
-  currentLevel: 0,
-  bossPatience: 100,
-  coffeeLevel: 100,
-  won: false,
-  timers: { coffee: null, pw: null, virus: null, log: null },
-};
+  const ui = {
+    start: $("#start-screen"), startButton: $("#start-button"), startMute: $("#start-mute"),
+    shell: $("#game-shell"), stage: $("#main-stage"), end: $("#end-screen"),
+    dialogue: $("#dialogue-layer"), portrait: $("#dialogue-portrait"), dialogueMood: $("#dialogue-mood"),
+    dialogueName: $("#dialogue-name"), dialogueText: $("#dialogue-text"), dialogueBubble: $("#dialogue-bubble"),
+    dialogueTime: $("#dialogue-time"), dialogueStep: $("#dialogue-step"), dialogueNext: $("#dialogue-next"),
+    coffeeBar: $("#coffee-bar"), coffeeValue: $("#coffee-value"), patienceBar: $("#patience-bar"),
+    patienceValue: $("#patience-value"), clock: $("#clock"), phase: $("#phase-label"),
+    questCounter: $("#quest-counter"), hudMute: $("#hud-mute"), toasts: $("#toast-region"),
+    fx: $("#fx-layer"), bsod: $("#bsod-overlay")
+  };
 
-const COFFEE_TICK_MS = 2000;
-const COFFEE_PER_TICK = 1;
-const COFFEE_REFILL = 30;
-const LOW_WARN = 20;
+  const allQuests = [...Story.quests, Story.coreEvents.server, Story.coreEvents.coffee, Story.coreEvents.printer];
+  const questMap = new Map(allQuests.map(q => [q.id, q]));
+  const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches || false;
 
-const LEVEL_META = {
-  1: { tag: 'LVL 1/8', task: 'HARDWARE-SETUP',      clock: '09:00' },
-  2: { tag: 'LVL 2/8', task: 'FIRST-LEVEL SUPPORT', clock: '10:00' },
-  3: { tag: 'LVL 3/8', task: 'PASSWORT-PING-PONG',  clock: '11:00' },
-  4: { tag: 'LVL 4/8', task: 'VIREN-JAGD',          clock: '12:00' },
-  5: { tag: 'LVL 5/8', task: 'LOG-ANALYSE',         clock: '13:00' },
-  6: { tag: 'LVL 6/8', task: 'KAFFEE-NOTFALL',      clock: '14:00' },
-  7: { tag: 'LVL 7/8', task: 'RAM-UPGRADE',         clock: '15:00' },
-  8: { tag: 'LVL 8/8', task: 'KAFFEE-QUIZ',         clock: '16:00' },
-};
+  const storage = {
+    get(key, fallback) { try { return localStorage.getItem(key) ?? fallback; } catch (_) { return fallback; } },
+    set(key, value) { try { localStorage.setItem(key, value); } catch (_) {} }
+  };
 
-/* =========================================================
-   2. HELPERS
-   ========================================================= */
-const $ = (id) => document.getElementById(id);
+  const Audio = {
+    muted: storage.get("it-survival-muted", "0") === "1",
+    context: null,
+    init() {
+      if (this.muted) return;
+      const Context = window.AudioContext || window.webkitAudioContext;
+      if (!Context) return;
+      try {
+        if (!this.context) this.context = new Context();
+        if (this.context.state === "suspended") this.context.resume();
+      } catch (_) { this.context = null; }
+    },
+    tone(frequency = 330, duration = .06, type = "square", volume = .03, delay = 0) {
+      if (this.muted) return;
+      this.init();
+      if (!this.context) return;
+      try {
+        const start = this.context.currentTime + delay;
+        const oscillator = this.context.createOscillator();
+        const gain = this.context.createGain();
+        oscillator.type = type;
+        oscillator.frequency.setValueAtTime(frequency, start);
+        gain.gain.setValueAtTime(.0001, start);
+        gain.gain.exponentialRampToValueAtTime(volume, start + .008);
+        gain.gain.exponentialRampToValueAtTime(.0001, start + duration);
+        oscillator.connect(gain).connect(this.context.destination);
+        oscillator.start(start);
+        oscillator.stop(start + duration + .02);
+      } catch (_) {}
+    },
+    play(kind, frequency) {
+      if (kind === "tick") this.tone(frequency || 360, .035, "square", .018);
+      else if (kind === "pop") this.tone(frequency || 240, .065, "square", .035);
+      else if (kind === "message") { this.tone(620,.06,"square",.035); this.tone(840,.08,"square",.025,.07); }
+      else if (kind === "good") [440,660,880].forEach((f,i) => this.tone(f,.12,"square",.035,i*.075));
+      else if (kind === "bad") { this.tone(150,.18,"sawtooth",.05); this.tone(105,.22,"sawtooth",.035,.1); }
+      else if (kind === "boss") [82,74,65].forEach((f,i) => this.tone(f,.3,"sawtooth",.06,i*.12));
+    },
+    toggle() {
+      this.muted = !this.muted;
+      storage.set("it-survival-muted", this.muted ? "1" : "0");
+      updateMuteButtons();
+      if (!this.muted) { this.init(); this.play("message"); }
+    }
+  };
 
-function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
-
-function setDisplay(el, show, flex) {
-  el.style.display = show ? (flex ? 'flex' : 'block') : 'none';
-}
-
-let toastTimeout = null;
-function showToast(msg, type) {
-  const toast = $('toast');
-  toast.textContent = msg;
-  toast.className = type === 'good' ? 'show good' : 'show';
-  clearTimeout(toastTimeout);
-  toastTimeout = setTimeout(() => { toast.className = ''; }, 2200);
-}
-
-function playOverlay(id) {
-  const el = $(id);
-  el.classList.remove('play');
-  void el.offsetWidth;
-  el.classList.add('play');
-}
-
-function flashRed() { playOverlay('flash-red'); }
-function flashGreen() { playOverlay('flash-green'); }
-function flickerScreen() { playOverlay('flicker'); }
-
-let bsodTimeout = null;
-function showBSOD(ms) {
-  const b = $('bsod');
-  b.classList.add('show');
-  clearTimeout(bsodTimeout);
-  bsodTimeout = setTimeout(() => b.classList.remove('show'), ms || 1000);
-}
-
-function confetti(count) {
-  const layer = $('confetti-layer');
-  const colors = ['#00ff41', '#4fc3f7', '#ff2a6d', '#ffd54f', '#ffffff', '#ff8a65'];
-  const n = count || 90;
-  for (let i = 0; i < n; i++) {
-    const c = document.createElement('div');
-    c.className = 'confetti';
-    c.style.left = Math.random() * 100 + 'vw';
-    c.style.background = colors[i % colors.length];
-    c.style.animationDuration = (1.6 + Math.random() * 1.6) + 's';
-    c.style.animationDelay = (Math.random() * 0.4) + 's';
-    c.style.transform = 'rotate(' + Math.random() * 360 + 'deg)';
-    layer.appendChild(c);
-    setTimeout(() => c.remove(), 3800);
+  function freshState() {
+    return {
+      mode: "start", activeRun: false, ending: false,
+      time: 540, coffee: 100, patience: 100,
+      active: [], backlog: [], released: {}, completed: {}, ticketMeta: {}, currentQuest: null,
+      eventFlags: { server: false, coffee: false, boss: false },
+      moodScores: { brumm:0, kevin:0, jana:0, kalk:0, mogel:0, root:0, kaffemat:0, drucko:-1 },
+      logs: ["root@acme: systemcheck unauffällig. verdächtig.", "root@acme: der drucker lügt.", "nerddesk: warteschlange verbunden."],
+      kaffematPerfect: false, bossPerfect: false,
+      stats: { penalties:0, escalations:0, mistakes:0, idleSkips:0 }
+    };
   }
-}
 
-/* =========================================================
-   3. HUD
-   ========================================================= */
-function updateHUD() {
-  const c = clamp(gameState.coffeeLevel, 0, 100);
-  const p = clamp(gameState.bossPatience, 0, 100);
-  const coffeeFill = $('coffee-fill');
-  const patienceFill = $('patience-fill');
-  coffeeFill.style.width = c + '%';
-  patienceFill.style.width = p + '%';
-  $('coffee-value').textContent = c;
-  $('patience-value').textContent = p;
-  coffeeFill.classList.toggle('low-coffee', c <= LOW_WARN && c > 0);
-  patienceFill.classList.toggle('low-patience', p <= LOW_WARN && p > 0);
+  let state = freshState();
+  let globalIntervals = [];
+  let transientTimers = new Set();
+  let activeGameCleanup = null;
+  let dialogue = null;
+  let dialogueTypingTimer = null;
 
-  const meta = LEVEL_META[gameState.currentLevel];
-  if (meta) {
-    $('hud-level').textContent = meta.tag;
-    $('hud-task').textContent = meta.task;
+  function later(fn, ms) {
+    const id = setTimeout(() => { transientTimers.delete(id); fn(); }, ms);
+    transientTimers.add(id);
+    return id;
   }
-}
+  function clearRuntimeTimers() {
+    globalIntervals.forEach(clearInterval);
+    globalIntervals = [];
+    transientTimers.forEach(id => { clearTimeout(id); clearInterval(id); });
+    transientTimers.clear();
+    clearInterval(dialogueTypingTimer);
+    dialogueTypingTimer = null;
+  }
+  function formatTime(minutes) { return `${String(Math.floor(minutes/60)).padStart(2,"0")}:${String(minutes%60).padStart(2,"0")}`; }
+  function phaseForTime(minutes) {
+    let label = Story.phaseNames[0][1];
+    Story.phaseNames.forEach(([start,name]) => { if (minutes >= start) label = name; });
+    return label;
+  }
+  function moodFor(id) {
+    if (id === "brumm") return state.patience > 70 ? "happy" : state.patience > 35 ? "neutral" : "angry";
+    const score = state.moodScores[id] || 0;
+    return score > 0 ? "happy" : score < 0 ? "angry" : "neutral";
+  }
+  function moodEmoji(id) { return Characters.moodEmoji[moodFor(id)]; }
+  function adjustMood(id, amount) {
+    if (id === "brumm" || !(id in state.moodScores)) return;
+    state.moodScores[id] = Math.max(-1, Math.min(1, state.moodScores[id] + amount));
+  }
+  function solvedCount() { return Story.totalQuestIds.filter(id => state.completed[id]).length; }
 
-function changePatience(delta, reason) {
-  if (gameState.currentLevel <= 0 || gameState.currentLevel >= 9) return;
-  gameState.bossPatience = clamp(gameState.bossPatience + delta, 0, 100);
-  updateHUD();
-  if (reason) showToast(reason + '  (Boss ' + delta + ')');
-  flashRed();
-  checkGameOver();
-}
+  function updateHud() {
+    const coffee = Math.max(0,Math.min(100,Math.round(state.coffee)));
+    const patience = Math.max(0,Math.min(100,Math.round(state.patience)));
+    ui.coffeeValue.textContent = coffee;
+    ui.coffeeBar.style.width = `${coffee}%`;
+    ui.coffeeBar.parentElement.setAttribute("aria-valuenow", coffee);
+    ui.patienceValue.textContent = patience;
+    ui.patienceBar.style.width = `${patience}%`;
+    ui.patienceBar.parentElement.setAttribute("aria-valuenow", patience);
+    ui.clock.textContent = formatTime(state.time);
+    ui.phase.textContent = phaseForTime(state.time);
+    ui.questCounter.textContent = `${solvedCount()}/${Story.totalQuestIds.length} GELÖST`;
+  }
+  function updateMuteButtons() {
+    const icon = Audio.muted ? "🔇" : "🔊";
+    const label = Audio.muted ? "Ton einschalten" : "Ton ausschalten";
+    [ui.startMute,ui.hudMute].forEach(button => { button.textContent=icon; button.title=label; button.setAttribute("aria-label",label); });
+  }
+  function toast(message, kind="") {
+    const node = document.createElement("div");
+    node.className = `toast ${kind}`.trim();
+    node.textContent = message;
+    ui.toasts.appendChild(node);
+    later(() => node.remove(), 3100);
+  }
+  function flash(kind) {
+    const className = kind === "good" ? "flash-good" : "flash-bad";
+    ui.fx.classList.remove("flash-good","flash-bad");
+    void ui.fx.offsetWidth;
+    ui.fx.classList.add(className);
+    later(() => ui.fx.classList.remove(className), 450);
+  }
+  function confetti(amount=42) {
+    if (reducedMotion) return;
+    const colors=["#4df29a","#5cc8ff","#ffd166","#ff5d73","#b892ff"];
+    for(let i=0;i<amount;i+=1){
+      const p=document.createElement("i"); p.className="confetti";
+      p.style.setProperty("--x",`${Math.random()*100}%`); p.style.setProperty("--dx",`${(Math.random()-.5)*170}px`);
+      p.style.setProperty("--c",colors[i%colors.length]); p.style.animationDelay=`${Math.random()*.45}s`;
+      ui.fx.appendChild(p); later(()=>p.remove(),1900);
+    }
+  }
+  function showBsod(){ ui.bsod.hidden=false; Audio.play("bad"); later(()=>{ui.bsod.hidden=true;},1000); }
+  function changeCoffee(amount, reason="") {
+    if(state.ending) return;
+    state.coffee=Math.max(0,Math.min(100,state.coffee+amount)); updateHud();
+    if(reason&&amount>0) toast(`${reason}: +${amount} Kaffee`,"good");
+    if(state.coffee<=0) endDay("asleep");
+  }
+  function changePatience(amount, reason="") {
+    if(state.ending) return;
+    state.patience=Math.max(0,Math.min(100,state.patience+amount)); updateHud();
+    if(amount<0){ state.stats.penalties+=Math.abs(amount); state.stats.mistakes+=1; toast(`${reason||"Chef Brumm missbilligt das"}: ${amount} Geduld`,"bad"); flash("bad"); Audio.play("bad"); }
+    if(state.patience<=0) endDay("fired");
+  }
+  function addLog(text){ state.logs.push(text); if(state.logs.length>14) state.logs.shift(); }
+  function getQuest(id){ return questMap.get(id); }
 
-function checkGameOver() {
-  if (gameState.currentLevel <= 0 || gameState.currentLevel >= 9) return false;
-  if (gameState.coffeeLevel <= 0 || gameState.bossPatience <= 0) {
-    gameState.won = false;
-    gotoLevel(9);
+
+  /* ---------- Ticket-Scheduler und Board ---------- */
+  function canRelease(quest){
+    if(state.released[quest.id]||state.completed[quest.id]||state.time<quest.releaseAt) return false;
+    return !quest.unlockAfter || Boolean(state.completed[quest.unlockAfter]);
+  }
+  function dispatchQuest(quest){
+    if(!quest||state.released[quest.id]) return false;
+    state.released[quest.id]=true;
+    state.ticketMeta[quest.id]={born:state.time,stage:0,typed:false,chars:0,messageKey:"base",typingTimer:null};
+    (state.active.length<3?state.active:state.backlog).push(quest.id);
+    addLog(`nerddesk: neue anfrage von ${Characters.data[quest.character].short.toLowerCase()}.`);
+    toast(`${Characters.data[quest.character].short} tippt…`,"warn"); Audio.play("message");
     return true;
   }
-  return false;
-}
-
-function startCoffeeLoop() {
-  stopTimer('coffee');
-  gameState.timers.coffee = setInterval(() => {
-    if (gameState.currentLevel <= 0 || gameState.currentLevel >= 9) return;
-    gameState.coffeeLevel = clamp(gameState.coffeeLevel - COFFEE_PER_TICK, 0, 100);
-    updateHUD();
-    checkGameOver();
-  }, COFFEE_TICK_MS);
-}
-
-function stopTimer(key) {
-  if (gameState.timers[key]) {
-    clearInterval(gameState.timers[key]);
-    gameState.timers[key] = null;
+  function drainBacklog(){ while(state.active.length<3&&state.backlog.length) state.active.push(state.backlog.shift()); }
+  function ticketMessage(quest,meta){ return meta.stage>0?(quest.escalation?.[meta.stage-1]||quest.summary):quest.summary; }
+  function resetTicketTyping(id,key){
+    const meta=state.ticketMeta[id]; if(!meta)return;
+    if(meta.typingTimer){ clearInterval(meta.typingTimer); transientTimers.delete(meta.typingTimer); }
+    Object.assign(meta,{typed:false,chars:0,messageKey:key,typingTimer:null});
   }
-}
-
-function stopAllTimers() {
-  Object.keys(gameState.timers).forEach(stopTimer);
-}
-
-/* =========================================================
-   4. LEVEL-WECHSEL
-   ========================================================= */
-const levelInits = {};
-const levelCleanups = {};
-
-function gotoLevel(n) {
-  const prev = $('level-' + gameState.currentLevel);
-  if (prev) setDisplay(prev, false);
-  const cleanup = levelCleanups[gameState.currentLevel];
-  if (cleanup) cleanup();
-
-  gameState.currentLevel = n;
-
-  const hud = $('hud');
-  if (n >= 1 && n <= 8) {
-    setDisplay(hud, true);
-    $('app').classList.add('hud-on');
-  } else {
-    setDisplay(hud, false);
-    $('app').classList.remove('hud-on');
+  function ensureTicketTyping(id){
+    const meta=state.ticketMeta[id],quest=getQuest(id); if(!meta||!quest||meta.typed||meta.typingTimer)return;
+    const full=ticketMessage(quest,meta);
+    const timer=setInterval(()=>{
+      if(!state.ticketMeta[id]||state.mode!=="board")return;
+      meta.chars=Math.min(full.length,meta.chars+1);
+      const target=$(`[data-ticket-message="${id}"]`,ui.stage); if(target)target.textContent=full.slice(0,meta.chars);
+      if(meta.chars%4===0)Audio.play("tick",300+(meta.chars%6)*20);
+      if(meta.chars>=full.length){meta.typed=true;meta.typingTimer=null;clearInterval(timer);transientTimers.delete(timer);}
+    },reducedMotion?1:18);
+    meta.typingTimer=timer; transientTimers.add(timer);
   }
-
-  setDisplay($('level-' + n), true, true);
-
-  if (n === 9) renderEndScreen();
-  else if (levelInits[n]) levelInits[n]();
-}
-
-function completeLevel(next) {
-  if (gameState.currentLevel >= 9) return;
-  gameState.coffeeLevel = clamp(gameState.coffeeLevel + COFFEE_REFILL, 0, 100);
-  updateHUD();
-  setTimeout(() => {
-    if (gameState.currentLevel < 9) gotoLevel(next);
-  }, 750);
-}
-
-/* =========================================================
-   5. LEVEL 9 : FEIERABEND
-   ========================================================= */
-function renderEndScreen() {
-  stopAllTimers();
-  const won = gameState.won && gameState.bossPatience > 0 && gameState.coffeeLevel > 0;
-  const title = $('end-title');
-  const rank = $('end-rank');
-  const detail = $('end-detail');
-  const now = new Date();
-  $('stamp-time').textContent =
-    String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
-
-  if (won) {
-    title.textContent = '★ GEWONNEN! ★';
-    title.classList.remove('gameover');
-    let r;
-    if (gameState.bossPatience > 80) r = 'ROOT-GOTT 👑';
-    else if (gameState.bossPatience > 40) r = 'SYSADMIN 🖥';
-    else r = 'MAUS-SCHUBSER 🐭';
-    rank.textContent = 'Rang: ' + r;
-    detail.innerHTML =
-      'Du hast die Schicht überlebt!<br>' +
-      '☕ Kaffee übrig: ' + gameState.coffeeLevel + '%<br>' +
-      '😡 Boss-Geduld übrig: ' + gameState.bossPatience + '%';
-    confetti(90);
-  } else {
-    title.textContent = 'GAME OVER';
-    title.classList.add('gameover');
-    rank.textContent = '';
-    detail.innerHTML = gameState.bossPatience <= 0
-      ? 'Du wurdest gefeuert. Der Boss hat genug. 📦'
-      : 'Du bist eingeschlafen. Zu wenig Kaffee. 😴';
-    flashRed();
-  }
-}
-
-/* =========================================================
-   6. LEVEL 0 : START + RESTART
-   ========================================================= */
-$('btn-start').addEventListener('click', () => {
-  gameState.bossPatience = 100;
-  gameState.coffeeLevel = 100;
-  gameState.won = false;
-  updateHUD();
-  startCoffeeLoop();
-  gotoLevel(1);
-});
-
-$('btn-restart').addEventListener('click', () => {
-  stopAllTimers();
-  gotoLevel(0);
-});
-
-/* =========================================================
-   7. UNIFIED TOUCH + MOUSE HELPER
-   ========================================================= */
-function addPointer(el, handlers) {
-  const getXY = (e) => {
-    if (e.touches && e.touches.length > 0) {
-      return { x: e.touches[0].clientX, y: e.touches[0].clientY };
-    }
-    if (e.changedTouches && e.changedTouches.length > 0) {
-      return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
-    }
-    return { x: e.clientX, y: e.clientY };
-  };
-
-  let active = false;
-
-  const start = (e) => {
-    if (active) return;
-    active = true;
-    const p = getXY(e);
-    if (handlers.start) handlers.start(p.x, p.y, e);
-  };
-
-  const move = (e) => {
-    if (!active) return;
-    if (e.cancelable) e.preventDefault();
-    const p = getXY(e);
-    if (handlers.move) handlers.move(p.x, p.y, e);
-  };
-
-  const end = (e) => {
-    if (!active) return;
-    active = false;
-    const p = getXY(e);
-    if (handlers.end) handlers.end(p.x, p.y, e);
-  };
-
-  el.addEventListener('touchstart', start, { passive: true });
-  el.addEventListener('touchmove', move, { passive: false });
-  el.addEventListener('touchend', end, { passive: true });
-  el.addEventListener('touchcancel', end, { passive: true });
-  el.addEventListener('mousedown', start);
-  window.addEventListener('mousemove', move);
-  window.addEventListener('mouseup', end);
-}
-
-function pointInRect(x, y, rect, pad) {
-  const p = pad || 0;
-  return x >= rect.left - p && x <= rect.right + p &&
-         y >= rect.top - p && y <= rect.bottom + p;
-}
-
-/* =========================================================
-   8. LEVEL 1 : PC-RÜCKSEITE (HDMI — Mainboard vs. GPU)
-   ========================================================= */
-levelInits[1] = function () {
-  const cable = $('cable');
-  const cableInner = $('cable-inner');
-  const portMb = $('port-mb');
-  const portGpu = $('port-gpu-hdmi');
-
-  // Alle anderen Anschlüsse sind ebenfalls Fallen
-  const traps = [
-    { sel: '#pc-back .io-vga', msg: 'VGA?! Wir haben 2026!', pen: -10 },
-    { sel: '#pc-back .gpu-dp', msg: 'HDMI passt nicht in DisplayPort!', pen: -10 },
-    { sel: '#pc-back .io-usb', msg: 'Das ist kein Monitor-Anschluss!', pen: -10 },
-    { sel: '#pc-back .io-lan', msg: 'Das ist kein Monitor-Anschluss!', pen: -10 },
-    { sel: '#pc-back .io-audio', msg: 'Sound ja, Bild nein. Falscher Port!', pen: -10 },
-  ].map((t) => ({
-    pen: t.pen,
-    msg: t.msg,
-    els: Array.from(document.querySelectorAll(t.sel)),
-  }));
-
-  let flipCount = 0;
-  let startX = 0, startY = 0;
-  let baseX = 0, baseY = 0;
-  let moved = false;
-  let done = false;
-
-  function resetCable() {
-    baseX = 0; baseY = 0;
-    cable.style.transform = 'translate(0px, 0px)';
-  }
-
-  function applyFlip() {
-    cableInner.classList.remove('flip-1', 'flip-2');
-    if (flipCount % 2 === 1) cableInner.classList.add('flip-1');
-    else if (flipCount > 0) cableInner.classList.add('flip-2');
-  }
-
-  function clearGlow() {
-    portGpu.classList.remove('hot');
-    portMb.classList.remove('trap-glow');
-  }
-
-  addPointer(cable, {
-    start(x, y) {
-      if (done) return;
-      startX = x; startY = y;
-      moved = false;
-      cable.classList.add('dragging');
-    },
-    move(x, y) {
-      if (done) return;
-      const dx = x - startX;
-      const dy = y - startY;
-      if (Math.abs(dx) + Math.abs(dy) > 10) moved = true;
-      if (moved) {
-        cable.style.transform = 'translate(' + (baseX + dx) + 'px, ' + (baseY + dy) + 'px)';
-        // Nähe-Feedback auf den HDMI-Buchsen
-        portGpu.classList.toggle('hot', pointInRect(x, y, portGpu.getBoundingClientRect(), 24));
-        portMb.classList.toggle('trap-glow', pointInRect(x, y, portMb.getBoundingClientRect(), 24));
+  function updateEscalations(){
+    let changed=false;
+    [...state.active,...state.backlog].forEach(id=>{
+      const meta=state.ticketMeta[id],quest=getQuest(id); if(!meta||!quest)return;
+      const age=state.time-meta.born,desired=age>=55?2:age>=30?1:0;
+      if(desired<=meta.stage)return;
+      for(let stage=meta.stage+1;stage<=desired;stage+=1){
+        meta.stage=stage; state.stats.escalations+=1; adjustMood(quest.character,-1); resetTicketTyping(id,`stage-${stage}`);
+        if(stage===1){changePatience(-5,`${Characters.data[quest.character].short} wartet zu lange`);toast(`${Characters.data[quest.character].short}: „??“`,"warn");}
+        else{const extra=quest.character==="kalk"?5:0;changePatience(-(10+extra),"Eskalation an Chef Brumm");toast(`CHEF BRUMM wurde bei „${quest.title}“ ins CC gesetzt`,"bad");}
       }
-    },
-    end(x, y) {
-      if (done) return;
-      cable.classList.remove('dragging');
-      clearGlow();
-
-      // TAP: Stecker drehen (flipCount + 1, 180°-Animation)
-      if (!moved) {
-        flipCount++;
-        applyFlip();
-        return;
-      }
-
-      baseX += x - startX;
-      baseY += y - startY;
-
-      // Falle 1: HDMI am Mainboard
-      if (pointInRect(x, y, portMb.getBoundingClientRect(), 14)) {
-        changePatience(-15, 'Falscher Port! GPU ist verbaut!');
-        resetCable();
-        return;
-      }
-
-      // Falle 2: alle anderen Anschlüsse
-      for (const trap of traps) {
-        for (const el of trap.els) {
-          if (pointInRect(x, y, el.getBoundingClientRect(), 12)) {
-            changePatience(trap.pen, trap.msg);
-            resetCable();
-            return;
-          }
-        }
-      }
-
-      // Ziel: HDMI an der GPU
-      if (pointInRect(x, y, portGpu.getBoundingClientRect(), 14)) {
-        if (flipCount < 2) {
-          showToast('Passt nicht. Dreh das Kabel!');
-          resetCable();
-          return;
-        }
-        done = true;
-        cable.classList.add('dock');
-        portGpu.classList.add('hot');
-        flickerScreen();
-        showToast('Monitor erkannt! Signal steht. ✅', 'good');
-        completeLevel(2);
-        return;
-      }
-
-      resetCable();
-    },
-  });
-};
-
-/* =========================================================
-   9. LEVEL 2 : TICKET-TINDER
-   ========================================================= */
-const TICKETS = [
-  { id: 'T-1042', emoji: '☕', text: 'Kaffee in Tastatur verschüttet', isDumbQuestion: true },
-  { id: 'T-1043', emoji: '🔥', text: 'Datenbank brennt', isDumbQuestion: false },
-  { id: 'T-1044', emoji: '🗑', text: 'User hat das Internet gelöscht', isDumbQuestion: true },
-  { id: 'T-1045', emoji: '📉', text: 'Server offline – Shop down', isDumbQuestion: false },
-  { id: 'T-1046', emoji: '🖱', text: 'Maus geht nicht (USB nicht eingesteckt)', isDumbQuestion: true },
-];
-
-levelInits[2] = function () {
-  const stack = $('card-stack');
-  let swiped = 0;
-  let queue = TICKETS.slice();
-
-  $('counter-2').textContent = '0 / 5';
-
-  function renderStack() {
-    stack.innerHTML = '';
-    for (let i = queue.length - 1; i >= 0; i--) {
-      const t = queue[i];
-      const card = document.createElement('div');
-      card.className = 'ticket-card';
-      card.style.transform = 'translateY(' + i * 8 + 'px) scale(' + (1 - i * 0.04) + ')';
-      card.style.zIndex = String(100 - i);
-      card.innerHTML =
-        '<span class="ticket-id">' + t.id + '</span>' +
-        '<span class="ticket-emoji">' + t.emoji + '</span>' +
-        '<span class="ticket-text">' + t.text + '</span>' +
-        '<span class="stamp-ok">ESKALIERT</span>' +
-        '<span class="stamp-no">IGNORIERT</span>';
-      stack.appendChild(card);
-      if (i === 0) attachSwipe(card, t);
-    }
-  }
-
-  function attachSwipe(card, ticket) {
-    let sx = 0;
-    let dragging = false;
-    const stampOk = card.querySelector('.stamp-ok');
-    const stampNo = card.querySelector('.stamp-no');
-
-    addPointer(card, {
-      start(x) { sx = x; dragging = false; card.style.transition = 'none'; },
-      move(x) {
-        const dx = x - sx;
-        if (Math.abs(dx) > 6) dragging = true;
-        if (!dragging) return;
-        card.style.transform = 'translateX(' + dx + 'px) rotate(' + dx / 14 + 'deg)';
-        stampOk.style.opacity = clamp(dx / 80, 0, 1);
-        stampNo.style.opacity = clamp(-dx / 80, 0, 1);
-      },
-      end(x) {
-        card.style.transition = '';
-        const dx = x - sx;
-        if (!dragging || Math.abs(dx) < 70) {
-          card.style.transform = 'translateX(0) rotate(0)';
-          stampOk.style.opacity = 0;
-          stampNo.style.opacity = 0;
-          return;
-        }
-        const swipedRight = dx > 0;
-        const correct = (swipedRight && !ticket.isDumbQuestion) || (!swipedRight && ticket.isDumbQuestion);
-
-        card.style.transform = 'translateX(' + (swipedRight ? 1 : -1) * 140 + 'vw) rotate(' + (swipedRight ? 30 : -30) + 'deg)';
-        card.style.opacity = '0';
-
-        swiped++;
-        $('counter-2').textContent = swiped + ' / 5';
-
-        if (correct) {
-          flashGreen();
-        } else {
-          changePatience(-10, swipedRight ? 'Das war KEIN Notfall!' : 'Das war wichtig!');
-        }
-
-        queue.shift();
-        if (swiped >= 5) {
-          showToast('Alle Tickets bearbeitet! 🎫', 'good');
-          completeLevel(3);
-        } else if (gameState.currentLevel === 2) {
-          setTimeout(renderStack, 260);
-        }
-      },
+      changed=true;
     });
+    return changed;
   }
-
-  renderStack();
-};
-
-levelCleanups[2] = function () {
-  $('card-stack').innerHTML = '';
-};
-
-/* =========================================================
-   10. LEVEL 3 : PASSWORT-PING-PONG
-   ========================================================= */
-const PW_TIME_MS = 20000;
-
-levelInits[3] = function () {
-  const input = $('pw-input');
-  const btnSave = $('btn-save-pw');
-  const timerFill = $('timer-fill');
-  const timerText = $('timer-text');
-
-  const rules = {
-    upper: { el: $('rule-case'), test: (v) => /[A-Z]/.test(v) },
-    special: { el: $('rule-special'), test: (v) => /[!@#$%^&*]/.test(v) },
-    forbidden: {
-      el: $('rule-forbidden'),
-      test: (v) => v.length > 0 && v.toLowerCase() !== 'passwort' && v.toLowerCase() !== 'admin',
-    },
-    emoji: { el: $('rule-emoji'), test: (v) => /[^\u0000-\u24FF]/.test(v) },
-  };
-
-  input.value = '';
-  setDisplay(btnSave, false);
-  Object.values(rules).forEach((r) => r.el.classList.remove('ok'));
-
-  function checkAll() {
-    const v = input.value;
-    let allOk = v.length > 0;
-    Object.values(rules).forEach((r) => {
-      const ok = r.test(v);
-      r.el.classList.toggle('ok', ok);
-      if (!ok) allOk = false;
-    });
-    setDisplay(btnSave, allOk);
+  function nextMandatory(){
+    return [["server",Story.coreEvents.server],["coffee",Story.coreEvents.coffee],["boss",Story.coreEvents.printer]]
+      .find(([flag,quest])=>!state.eventFlags[flag]&&state.time>=quest.releaseAt)||null;
   }
-
-  input.addEventListener('keyup', checkAll);
-  input.addEventListener('input', checkAll);
-
-  btnSave.onclick = () => {
-    stopTimer('pw');
-    showToast('Passwort gespeichert. Erinnere dich in 30 Tagen nicht daran. 🔒', 'good');
-    flashGreen();
-    completeLevel(4);
-  };
-
-  const t0 = Date.now();
-  stopTimer('pw');
-  gameState.timers.pw = setInterval(() => {
-    if (gameState.currentLevel !== 3) { stopTimer('pw'); return; }
-    const remain = PW_TIME_MS - (Date.now() - t0);
-    if (remain <= 0) {
-      stopTimer('pw');
-      timerFill.style.width = '0%';
-      timerText.textContent = '0s';
-      changePatience(-20, 'Zu langsam! Der Boss wartet!');
-      if (gameState.currentLevel === 3) {
-        levelInits[3]();
-      }
-      return;
-    }
-    const pct = (remain / PW_TIME_MS) * 100;
-    timerFill.style.width = pct + '%';
-    timerFill.classList.toggle('danger', pct < 30);
-    timerText.textContent = Math.ceil(remain / 1000) + 's';
-  }, 100);
-};
-
-levelCleanups[3] = function () {
-  stopTimer('pw');
-};
-
-/* =========================================================
-   11. LEVEL 4 : VIREN-JAGD
-   ========================================================= */
-const VIRUS_EMOJIS = ['😈', '👾', '🦠', '💣'];
-const SYSTEM_EMOJIS = ['📁', '💾', '📄', '🖥'];
-const VIRUS_NAMES = ['crypt0.exe', 'trojan.dll', 'wurm.bat', 'sehr_echt.exe'];
-const SYSTEM_NAMES = ['system32', 'dokumente', 'gehalt.xlsx', 'kernel'];
-
-levelInits[4] = function () {
-  const desktop = $('desktop');
-  let kills = 0;
-  $('kill-count').textContent = '0';
-
-  function spawnIcon() {
-    if (gameState.currentLevel !== 4) return;
-    const isVirus = Math.random() < 0.45;
-    const icon = document.createElement('div');
-    icon.className = 'file-icon';
-
-    const dr = desktop.getBoundingClientRect();
-    const x = 8 + Math.random() * Math.max(dr.width - 80, 60);
-    const y = 8 + Math.random() * Math.max(dr.height - 110, 60);
-    icon.style.left = x + 'px';
-    icon.style.top = y + 'px';
-
-    const emoji = isVirus
-      ? VIRUS_EMOJIS[Math.floor(Math.random() * VIRUS_EMOJIS.length)]
-      : SYSTEM_EMOJIS[Math.floor(Math.random() * SYSTEM_EMOJIS.length)];
-    const name = isVirus
-      ? VIRUS_NAMES[Math.floor(Math.random() * VIRUS_NAMES.length)]
-      : SYSTEM_NAMES[Math.floor(Math.random() * SYSTEM_NAMES.length)];
-
-    icon.innerHTML = '<span class="fi-emoji">' + emoji + '</span><span class="fi-name">' + name + '</span>';
-    desktop.appendChild(icon);
-
-    const despawn = setTimeout(() => { if (icon.parentNode) icon.remove(); }, 2000);
-
-    addPointer(icon, {
-      start(px, py, e) {
-        if (e.cancelable) e.preventDefault();
-        clearTimeout(despawn);
-        if (!icon.parentNode) return;
-
-        if (isVirus) {
-          const ir = icon.getBoundingClientRect();
-          const cx = ir.left + ir.width / 2;
-          const cy = ir.top + ir.height / 2;
-          for (let i = 0; i < 10; i++) {
-            const p = document.createElement('div');
-            p.className = 'particle';
-            const ang = (Math.PI * 2 * i) / 10 + Math.random();
-            const dist = 26 + Math.random() * 30;
-            p.style.setProperty('--dx', Math.cos(ang) * dist + 'px');
-            p.style.setProperty('--dy', Math.sin(ang) * dist + 'px');
-            p.style.left = cx - 3 + 'px';
-            p.style.top = cy - 3 + 'px';
-            document.body.appendChild(p);
-            setTimeout(() => p.remove(), 600);
-          }
-          icon.remove();
-          kills++;
-          $('kill-count').textContent = kills;
-          if (kills >= 10) {
-            stopTimer('virus');
-            flashGreen();
-            showToast('System bereinigt! 🛡', 'good');
-            completeLevel(5);
-          }
-        } else {
-          icon.remove();
-          showBSOD(1000);
-          changePatience(-25, 'SYSTEMDATEI GELÖSCHT!');
-        }
-      },
-    });
+  function checkSchedule(){
+    if(state.mode!=="board"||state.ending)return{interrupted:false,changed:false};
+    const mandatory=nextMandatory();
+    if(mandatory){startMandatory(mandatory[0],mandatory[1]);return{interrupted:true,changed:true};}
+    let changed=false;
+    [...Story.quests].sort((a,b)=>a.order-b.order).forEach(quest=>{if(canRelease(quest))changed=dispatchQuest(quest)||changed;});
+    drainBacklog(); return{interrupted:false,changed};
   }
-
-  stopTimer('virus');
-  gameState.timers.virus = setInterval(spawnIcon, 800);
-};
-
-levelCleanups[4] = function () {
-  stopTimer('virus');
-  const desktop = $('desktop');
-  desktop.querySelectorAll('.file-icon').forEach((el) => el.remove());
-};
-
-/* =========================================================
-   12. LEVEL 5 : LOG-ANALYSE (neu)
-   ========================================================= */
-const LOG_TIME_MS = 30000;
-const LOG_LINES_NEEDED = 6;
-
-const LOG_TEXTS = {
-  err: [
-    'segfault at 0x7fff in module auth.so',
-    'FATAL: database connection lost',
-    'kernel panic – not syncing',
-    'OOM killer invoked on process java',
-    'disk /dev/sda1: I/O error',
-    'CRITICAL: raid array degraded',
-    'panic: runtime error: index out of range',
-  ],
-  warn: [
-    'cpu temperature above threshold',
-    'deprecated API call detected',
-    'swap usage at 87%',
-    'tls certificate expires in 3 days',
-    'slow query took 2.4s',
-  ],
-  info: [
-    'backup completed successfully',
-    'user admin logged in',
-    'cron job finished: cleanup',
-    'http 200 GET /index.html',
-    'service nginx reloaded',
-    'sync done in 12ms',
-  ],
-};
-
-levelInits[5] = function () {
-  const feed = $('log-lines');
-  feed.innerHTML = '';
-  let found = 0;
-  let clockS = 0;
-  $('log-count').textContent = '0';
-
-  function stamp() {
-    clockS += 1 + Math.floor(Math.random() * 4);
-    const mm = String(Math.floor(clockS / 60)).padStart(2, '0');
-    const ss = String(clockS % 60).padStart(2, '0');
-    return '13:' + mm + ':' + ss;
+  function updateBoardDynamic(){
+    if(state.mode!=="board")return;
+    const timeNode=$("[data-board-time]",ui.stage); if(timeNode)timeNode.textContent=formatTime(state.time);
+    const segment=Math.max(0,Math.min(7,Math.floor((state.time-540)/60)));
+    $$('[data-time-segment]',ui.stage).forEach(node=>{const i=Number(node.dataset.timeSegment);node.classList.toggle("passed",i<segment);node.classList.toggle("current",i===segment);});
+    state.active.forEach(id=>{const card=$(`[data-ticket="${id}"]`,ui.stage),meta=state.ticketMeta[id];if(card&&meta)card.style.setProperty("--age",`${Math.min(100,((state.time-meta.born)/55)*100)}%`);});
   }
-
-  function spawnLine() {
-    if (gameState.currentLevel !== 5) return;
-    const roll = Math.random();
-    const type = roll < 0.35 ? 'err' : roll < 0.6 ? 'warn' : 'info';
-    const texts = LOG_TEXTS[type];
-    const text = texts[Math.floor(Math.random() * texts.length)];
-
-    const line = document.createElement('div');
-    line.className = 'log-line ' + type;
-    const label = type === 'err' ? 'ERROR' : type.toUpperCase();
-    line.innerHTML = '<span class="lt">[' + stamp() + ']</span> <span class="lv">[' + label + ']</span> ' + text;
-    feed.prepend(line);
-
-    while (feed.children.length > 9) feed.removeChild(feed.lastChild);
-
-    addPointer(line, {
-      start(px, py, e) {
-        if (e.cancelable) e.preventDefault();
-        if (line.classList.contains('caught')) return;
-        if (type === 'err') {
-          line.classList.add('caught');
-          found++;
-          $('log-count').textContent = found;
-          setTimeout(() => { if (line.parentNode) line.remove(); }, 450);
-          if (found >= LOG_LINES_NEEDED) {
-            stopTimer('log');
-            stopTimer('logt');
-            flashGreen();
-            showToast('Alle Errors gefixt! Server beruhigt. 📋', 'good');
-            completeLevel(6);
-          }
-        } else {
-          line.classList.remove('miss');
-          void line.offsetWidth;
-          line.classList.add('miss');
-          changePatience(-10, 'Das war kein ERROR!');
-        }
-      },
-    });
+  function renderBoard(){
+    if(state.mode!=="board"||state.ending)return;
+    const cards=state.active.map(id=>{
+      const quest=getQuest(id),meta=state.ticketMeta[id],mood=moodFor(quest.character),full=ticketMessage(quest,meta),shown=meta.typed?full:full.slice(0,meta.chars);
+      const stageLabel=meta.stage===2?"ESKALIERT · CC CHEF":meta.stage===1?"WARTET · ??":"NEU";
+      return `<article class="ticket-card escalated-${meta.stage}" data-ticket="${quest.id}" style="--age:${Math.min(100,((state.time-meta.born)/55)*100)}%">
+        <div class="portrait-frame"><canvas data-character="${quest.character}" data-mood="${mood}" aria-label="${Characters.data[quest.character].name}"></canvas><span class="mood-badge">${Characters.moodEmoji[mood]}</span></div>
+        <div class="ticket-copy"><div class="ticket-topline"><strong>${Characters.data[quest.character].name}</strong><time>${formatTime(meta.born)}</time><span class="pixel-tag ${meta.stage===2?"alert":meta.stage===1?"":"good"}">${stageLabel}</span></div><h3>${quest.title}</h3><p class="ticket-message" data-ticket-message="${quest.id}">${shown}</p></div>
+        <button class="primary-button accept-button" data-accept="${quest.id}" type="button">ANNEHMEN</button>
+      </article>`;
+    }).join("");
+    const segment=Math.max(0,Math.min(7,Math.floor((state.time-540)/60)));
+    const moodIds=["kevin","jana","kalk","mogel","root","kaffemat"];
+    const logs=state.logs.slice(-7).map((line,i,a)=>`<p class="${i<a.length-3?"dim":""}"><b>&gt;</b> ${line}</p>`).join("");
+    const empty=`<div class="empty-queue"><div><div class="radar"></div><b>POSTEINGANG RUHIG</b><p>Das ist verdächtiger als drei offene Tickets.</p></div></div>`;
+    ui.stage.innerHTML=`<section class="board-screen">
+      <div class="ticket-column">
+        <div class="board-heading"><div><h2>NERDPHONE · ANFRAGEN</h2><p>Maximal 3 sichtbar. Du bestimmst die Reihenfolge – und trägst die Folgen.</p></div><span class="queue-chip">${state.active.length}/3 AKTIV · ${state.backlog.length} WARTEND</span></div>
+        <div class="ticket-list">${cards||empty}</div>
+        <button id="idle-skip" class="secondary-button idle-button" type="button">▸ 10 MINUTEN LOGS BEOBACHTEN <small>(Tickets altern)</small></button>
+      </div>
+      <aside class="side-column">
+        <section class="side-card timeline"><div class="side-card-header"><span>SCHICHTVERLAUF</span><span data-board-time>${formatTime(state.time)}</span></div><div class="timeline-track">${Array.from({length:8},(_,i)=>`<i data-time-segment="${i}" class="${i<segment?"passed":i===segment?"current":""}"></i>`).join("")}</div><div class="timeline-labels"><span>09</span><span>11</span><span>13</span><span>15</span><span>17</span></div></section>
+        <section class="side-card"><div class="side-card-header"><span>BÜRO-STIMMUNG</span><span>${moodEmoji("brumm")} CHEF</span></div><div class="mood-grid">${moodIds.map(id=>`<div class="mood-person" title="${Characters.data[id].name}: ${moodFor(id)}"><canvas data-character="${id}" data-mood="${moodFor(id)}" aria-label="${Characters.data[id].name}"></canvas><span>${moodEmoji(id)}</span></div>`).join("")}</div></section>
+        <section class="side-card" style="min-height:0;flex:1"><div class="side-card-header"><span>ROOT // REMOTE</span><span>ONLINE?</span></div><div class="root-terminal">${logs}</div></section>
+      </aside>
+    </section>`;
+    $$('[data-accept]',ui.stage).forEach(button=>button.addEventListener("click",()=>acceptQuest(button.dataset.accept),{once:true}));
+    $("#idle-skip",ui.stage)?.addEventListener("click",()=>{state.stats.idleSkips+=1;addLog("du: 10 minuten professionell auf logs geschaut.");changeCoffee(-2);if(!state.ending)advanceTime(10);},{once:true});
+    state.active.forEach(ensureTicketTyping); Characters.renderAll(ui.stage);
   }
-
-  stopTimer('log');
-  gameState.timers.log = setInterval(spawnLine, 900);
-
-  // 30-Sekunden-Timer
-  const t0 = Date.now();
-  const fill = $('log-timer-fill');
-  const txt = $('log-timer-text');
-  stopTimer('logt');
-  gameState.timers.logt = setInterval(() => {
-    if (gameState.currentLevel !== 5) { stopTimer('logt'); return; }
-    const remain = LOG_TIME_MS - (Date.now() - t0);
-    if (remain <= 0) {
-      stopTimer('logt');
-      changePatience(-20, 'Logs nicht rechtzeitig gesichtet!');
-      if (gameState.currentLevel === 5) levelInits[5]();
-      return;
-    }
-    const pct = (remain / LOG_TIME_MS) * 100;
-    fill.style.width = pct + '%';
-    fill.classList.toggle('danger', pct < 30);
-    txt.textContent = Math.ceil(remain / 1000) + 's';
-  }, 100);
-};
-
-levelCleanups[5] = function () {
-  stopTimer('log');
-  stopTimer('logt');
-  $('log-lines').innerHTML = '';
-};
-
-/* =========================================================
-   13. LEVEL 6 : KAFFEE-NOTFALL (neu)
-   ========================================================= */
-levelInits[6] = function () {
-  const liquid = $('coffee-liquid');
-  const btn = $('btn-brew');
-
-  let fill = 10;
-  let brewing = false;
-  let done = false;
-
-  liquid.style.height = fill + '%';
-  btn.classList.remove('brewing');
-
-  function win() {
-    done = true;
-    brewing = false;
-    btn.classList.remove('brewing');
-    stopTimer('brew');
-    gameState.coffeeLevel = 100;
-    updateHUD();
-    confetti(30);
-    showToast('Gerettet! Koffein-Level wiederhergestellt. ☕', 'good');
-    completeLevel(7);
-  }
-
-  addPointer(btn, {
-    start(px, py, e) {
-      if (done) return;
-      if (e.cancelable) e.preventDefault();
-      brewing = true;
-      btn.classList.add('brewing');
-    },
-    end() {
-      if (done) return;
-      brewing = false;
-      btn.classList.remove('brewing');
-      if (fill >= 76 && fill <= 92) {
-        win();
-      } else if (fill > 92) {
-        showToast('Fast zu viel – Achtung, gleich läuft es über!');
-      } else {
-        showToast('Noch zu wenig – weiter füllen!');
-      }
-    },
-  });
-
-  stopTimer('brew');
-  gameState.timers.brew = setInterval(() => {
-    if (gameState.currentLevel !== 6 || done) { return; }
-    if (brewing) {
-      fill = Math.min(fill + 1.3, 104);
-    } else {
-      fill = Math.max(fill - 0.35, 10);
-    }
-    liquid.style.height = Math.min(fill, 100) + '%';
-    if (fill >= 100) {
-      brewing = false;
-      btn.classList.remove('brewing');
-      fill = 10;
-      liquid.style.height = '10%';
-      changePatience(-15, 'Überlaufen! Die Tastatur ist nass!');
-    }
-  }, 50);
-};
-
-levelCleanups[6] = function () {
-  stopTimer('brew');
-};
-
-/* =========================================================
-   14. LEVEL 7 : RAM-UPGRADE (3 Phasen)
-   ========================================================= */
-const DUST_DISTANCE = 420;
-const CLIP_WINDOW_MS = 500;
-
-levelInits[7] = function () {
-  const cleanArea = $('clean-area');
-  const dust = $('dust');
-  const clipLeft = $('clip-left');
-  const clipRight = $('clip-right');
-  const slot = $('slot');
-  const ram = $('ram');
-  const ramInner = $('ram-inner');
-  const phaseLabel = $('phase-label');
-  const ramHint = $('ram-hint');
-
-  let phase = 1;
-
-  dust.classList.remove('gone');
-  clipLeft.disabled = true;
-  clipRight.disabled = true;
-  clipLeft.classList.remove('open');
-  clipRight.classList.remove('open');
-  slot.classList.remove('armed', 'filled');
-  setDisplay(ram, false);
-  setDisplay(ramHint, false);
-  ram.style.transform = 'translate(0px, 0px)';
-  ramInner.classList.remove('rot');
-  phaseLabel.textContent = 'Phase 1/3: Wische den Staub vom Mainboard!';
-
-  let dustDist = 0;
-  let lastX = null, lastY = null;
-
-  addPointer(cleanArea, {
-    start(x, y) { lastX = x; lastY = y; },
-    move(x, y) {
-      if (phase !== 1 || lastX === null) return;
-      dustDist += Math.hypot(x - lastX, y - lastY);
-      lastX = x; lastY = y;
-      dust.style.opacity = String(clamp(1 - dustDist / DUST_DISTANCE, 0, 1));
-      if (dustDist >= DUST_DISTANCE) {
-        phase = 2;
-        dust.classList.add('gone');
-        clipLeft.disabled = false;
-        clipRight.disabled = false;
-        phaseLabel.textContent = 'Phase 2/3: Öffne beide Klammern – innerhalb von 0,5s!';
-        flashGreen();
-      }
-    },
-    end() { lastX = null; lastY = null; },
-  });
-
-  let firstClipTime = 0;
-
-  function pressClip(which) {
-    if (phase !== 2) return;
-    const now = Date.now();
-    const btn = which === 'left' ? clipLeft : clipRight;
-    btn.classList.add('open');
-
-    if (firstClipTime === 0) {
-      firstClipTime = now;
-      return;
-    }
-
-    if (now - firstClipTime <= CLIP_WINDOW_MS &&
-        clipLeft.classList.contains('open') &&
-        clipRight.classList.contains('open')) {
-      phase = 3;
-      slot.classList.add('armed');
-      phaseLabel.textContent = 'Phase 3/3: Dreh den RAM richtig und steck ihn ein!';
-      setDisplay(ram, true, 'block');
-      setDisplay(ramHint, true);
-      flashGreen();
-    } else {
-      firstClipTime = now;
-      clipLeft.classList.remove('open');
-      clipRight.classList.remove('open');
-      btn.classList.add('open');
-      showToast('Zu langsam! Beide Klammern gleichzeitig!');
+  function advanceTime(minutes){
+    if(state.ending)return;
+    const target=state.time+minutes; state.time=!state.eventFlags.boss&&target>1005?1005:Math.min(1020,target);
+    const escalated=updateEscalations(); if(state.ending)return; updateHud();
+    if(state.mode==="board"){
+      const scheduled=checkSchedule(); if(scheduled.interrupted)return;
+      if(scheduled.changed||escalated)renderBoard();else updateBoardDynamic();
     }
   }
+  function startTimers(){
+    globalIntervals.forEach(clearInterval);
+    globalIntervals=[
+      setInterval(()=>{if(state.activeRun&&state.mode==="board"&&!state.ending)advanceTime(1);},2000),
+      setInterval(()=>{if(state.activeRun&&!state.ending&&!['start','ending'].includes(state.mode))changeCoffee(-1);},2000)
+    ];
+  }
 
-  clipLeft.onclick = () => pressClip('left');
-  clipRight.onclick = () => pressClip('right');
+  /* ---------- Dialog-State ---------- */
+  function showDialogue(messages,onDone){
+    if(!messages?.length){onDone?.();return;}
+    state.mode="dialogue"; dialogue={messages,index:0,onDone,typing:false,full:""}; ui.dialogue.hidden=false; renderDialogue();
+  }
+  function renderDialogue(){
+    const item=dialogue.messages[dialogue.index],character=Characters.data[item.speaker]||Characters.data.root,mood=moodFor(item.speaker);
+    dialogue.full=item.text; dialogue.typing=!reducedMotion;
+    Object.assign(ui.portrait.dataset,{character:item.speaker,mood});
+    ui.dialogueMood.textContent=Characters.moodEmoji[mood]; ui.dialogueName.textContent=character.name;
+    ui.dialogueTime.textContent=formatTime(state.time); ui.dialogueStep.textContent=`${dialogue.index+1} / ${dialogue.messages.length}`;
+    ui.dialogueNext.innerHTML=dialogue.index===dialogue.messages.length-1?'LOS <span>›</span>':'WEITER <span>›</span>';
+    ui.dialogueBubble.classList.toggle("terminal",Boolean(item.terminal||["root","kaffemat","drucko"].includes(item.speaker)));
+    Characters.draw(ui.portrait,item.speaker,mood,Characters.frame); clearInterval(dialogueTypingTimer);
+    if(reducedMotion){ui.dialogueText.textContent=item.text;dialogue.typing=false;return;}
+    ui.dialogueText.textContent="";let cursor=0;
+    dialogueTypingTimer=setInterval(()=>{
+      cursor+=1;ui.dialogueText.textContent=item.text.slice(0,cursor);
+      if(cursor%3===0&&item.text[cursor-1]!==" ")Audio.play("tick",item.terminal?260:390);
+      if(cursor>=item.text.length){clearInterval(dialogueTypingTimer);dialogueTypingTimer=null;dialogue.typing=false;}
+    },17);
+  }
+  function nextDialogue(){
+    if(!dialogue)return;
+    if(dialogue.typing){clearInterval(dialogueTypingTimer);dialogueTypingTimer=null;ui.dialogueText.textContent=dialogue.full;dialogue.typing=false;return;}
+    Audio.play("tick",440);dialogue.index+=1;
+    if(dialogue.index<dialogue.messages.length){renderDialogue();return;}
+    const done=dialogue.onDone;dialogue=null;ui.dialogue.hidden=true;done?.();
+  }
+  function enterBoard(){
+    if(state.ending)return;state.mode="board";state.currentQuest=null;
+    const scheduled=checkSchedule();if(!scheduled.interrupted)renderBoard();updateHud();
+  }
+  function acceptQuest(id){
+    if(state.mode!=="board"||state.ending||!state.active.includes(id))return;
+    const quest=getQuest(id),meta=state.ticketMeta[id];
+    if(meta?.typingTimer){clearInterval(meta.typingTimer);transientTimers.delete(meta.typingTimer);meta.typingTimer=null;meta.typed=true;}
+    state.active=state.active.filter(qid=>qid!==id);drainBacklog();state.currentQuest=id;addLog(`du: ticket ${id} angenommen.`);
+    showDialogue(quest.intro,()=>runMinigame(quest));
+  }
+  function startMandatory(flag,quest){
+    if(state.ending||state.eventFlags[flag])return;
+    state.eventFlags[flag]=true;state.released[quest.id]=true;state.currentQuest=quest.id;
+    if(flag==="server"){addLog("ALARM: prod-01 antwortet nur noch in ERRORs.");toast("⚠ PFLICHT-EVENT: SERVER-ALARM","bad");Audio.play("bad");}
+    else if(flag==="coffee"){addLog("kaffemat3000: ICH HABE GETRÄUMT.");toast("☕ KAFFEMAT 3000 fordert Wartung","warn");Audio.play("message");}
+    else{addLog("drucko5000: PC LOAD LETTER.");toast("🖨 16:45 · DRUCKO 5000 ERWACHT","bad");Audio.play("boss");}
+    showDialogue(quest.intro,()=>runMinigame(quest));
+  }
 
-  let ramRot = 0;
-  let ramDone = false;
-  let rsx = 0, rsy = 0;
-  let ramMoved = false;
-  let ramBaseX = 0, ramBaseY = 0;
 
-  addPointer(ram, {
-    start(x, y) {
-      if (phase !== 3 || ramDone) return;
-      rsx = x; rsy = y;
-      ramMoved = false;
-      ram.classList.add('dragging');
-    },
-    move(x, y) {
-      if (phase !== 3 || ramDone) return;
-      const dx = x - rsx;
-      const dy = y - rsy;
-      if (Math.abs(dx) + Math.abs(dy) > 10) ramMoved = true;
-      if (ramMoved) {
-        ram.style.transform = 'translate(' + (ramBaseX + dx) + 'px, ' + (ramBaseY + dy) + 'px)';
-      }
-    },
-    end(x, y) {
-      if (phase !== 3 || ramDone) return;
-      ram.classList.remove('dragging');
-
-      if (!ramMoved) {
-        ramRot = (ramRot + 180) % 360;
-        ramInner.classList.toggle('rot', ramRot === 180);
-        return;
-      }
-
-      ramBaseX += x - rsx;
-      ramBaseY += y - rsy;
-
-      const rSlot = slot.getBoundingClientRect();
-      if (pointInRect(x, y, rSlot, 16)) {
-        if (ramRot !== 0) {
-          showToast('Rastet nicht ein – falscher Winkel! Dreh den Riegel!');
-          ramBaseX = 0; ramBaseY = 0;
-          ram.style.transform = 'translate(0px, 0px)';
-          return;
-        }
-        ramDone = true;
-        ramBaseX = 0; ramBaseY = 0;
-        ram.style.transform = 'translate(0px, 0px)';
-        setDisplay(ram, false);
-        slot.classList.remove('armed');
-        slot.classList.add('filled');
-        flickerScreen();
-        showToast('16 GB erkannt. Der Rechner atmet auf. 🚀', 'good');
-        completeLevel(8);
-        return;
-      }
-
-      ramBaseX = 0; ramBaseY = 0;
-      ram.style.transform = 'translate(0px, 0px)';
-    },
-  });
-};
-
-/* =========================================================
-   15. LEVEL 8 : FACHWISSEN-CHECK
-   ========================================================= */
-levelInits[8] = function () {
-  const reply = $('colleague-reply');
-  setDisplay(reply, false);
-  const buttons = document.querySelectorAll('.answer-btn');
-  let solved = false;
-
-  buttons.forEach((btn) => {
-    btn.classList.remove('correct', 'wrong');
-    btn.onclick = () => {
-      if (solved) return;
-      if (btn.dataset.answer === 'HTML') {
-        solved = true;
-        btn.classList.add('correct');
-        confetti(90);
-        showToast('Korrekt! HTML ist eine Auszeichnungssprache. 🎉', 'good');
-        gameState.won = true;
-        completeLevel(9);
-      } else {
-        btn.classList.add('wrong');
-        setDisplay(reply, true);
-        changePatience(-15, 'Der Kollege zweifelt an dir.');
-        setTimeout(() => btn.classList.remove('wrong'), 500);
-      }
+  /* ---------- Minigame-Bridge ---------- */
+  function runMinigame(quest){
+    if(state.ending)return;
+    state.mode="minigame";state.currentQuest=quest.id;
+    const mood=moodFor(quest.character),bossClass=quest.minigame==="printerBoss"?"boss-screen":"";
+    ui.stage.innerHTML=`<section class="minigame-screen ${bossClass}">
+      <header class="mini-header"><div class="portrait-frame"><canvas data-character="${quest.character}" data-mood="${mood}" aria-label="${Characters.data[quest.character].name}"></canvas></div><div class="mini-title"><h2>${quest.title}</h2><p>${Characters.data[quest.character].name} · ${quest.duration} In-Game-Minuten</p></div><output id="mini-status" class="mini-status">BEREIT</output></header>
+      <div class="game-panel"><div id="minigame-root" class="game-inner"></div></div>
+    </section>`;
+    Characters.renderAll(ui.stage);
+    const root=$("#minigame-root",ui.stage);let settled=false;
+    const api={
+      setStatus(text){const output=$("#mini-status",ui.stage);if(output)output.textContent=text;},
+      penalty(amount,message){changePatience(-Math.abs(amount),message);},
+      rewardCoffee(amount,message){changeCoffee(Math.abs(amount),message);},
+      toast,flash,sound(kind,frequency){Audio.play(kind,frequency);},bsod:showBsod,
+      getEscalation(){return state.ticketMeta[quest.id]?.stage||0;},
+      success(payload){if(!settled){settled=true;finishQuest(quest,true,payload||{});}},
+      fail(payload){if(!settled){settled=true;finishQuest(quest,false,payload||{});}}
     };
-  });
-};
+    activeGameCleanup=Minigames.mount(quest.minigame,root,api,quest);
+  }
+  function finishQuest(quest,success,payload={}){
+    if(state.ending)return;
+    if(activeGameCleanup){try{activeGameCleanup();}catch(_){}activeGameCleanup=null;}
+    state.completed[quest.id]={success,at:state.time,payload};adjustMood(quest.character,success?1:-1);
+    if(!success)changePatience(-8,`${quest.title} verpatzt`);if(state.ending)return;
+    if(success&&quest.rewardCoffee)changeCoffee(quest.rewardCoffee,Characters.data[quest.character].short);
+    if(quest.id===Story.coreEvents.coffee.id){state.kaffematPerfect=Boolean(success&&payload.perfect);state.moodScores.kaffemat=state.kaffematPerfect?1:success?0:-1;}
+    if(quest.id===Story.coreEvents.server.id&&success)addLog("prod-01: status grün. cronjob in therapie.");
+    if(quest.id==="mogel-virus")addLog(`scanner: ${success?"10 viren isoliert":"scan unvollständig"}.`);
+    if(quest.id===Story.coreEvents.printer.id){state.bossPerfect=Boolean(payload.perfect);if(success){state.moodScores.drucko=0;adjustMood("kalk",1);}}
+    if(quest.id!==Story.coreEvents.printer.id)advanceTime(quest.duration+(success?0:10));
+    updateHud();flash(success?"good":"bad");Audio.play(success?"good":"bad");if(success)confetti(quest.id===Story.coreEvents.printer.id?70:24);
+    showDialogue(success?quest.success:quest.fail,()=>{
+      if(quest.id===Story.coreEvents.printer.id){state.time=1020;updateHud();endDay("review");}
+      else enterBoard();
+    });
+  }
 
-/* =========================================================
-   16. BOOT
-   ========================================================= */
-updateHUD();
+  /* ---------- Endings ---------- */
+  function rankForPatience(){
+    if(state.patience>80)return{title:"ROOT-GOTT 👑",copy:"Du hast nicht nur überlebt – du hast das Büro administriert, ohne sichtbar zu weinen.",stamp:"ROOT-GOTT"};
+    if(state.patience>40)return{title:"SYSADMIN 🖥",copy:"Der Betrieb läuft. Niemand weiß genau warum. Das ist professionelle IT.",stamp:"ÜBERLEBT"};
+    return{title:"MAUS-SCHUBSER 🐭",copy:"Der Tag ist geschafft. Chef Brumm auch. Morgen bitte weniger Rauch.",stamp:"KNAPP ÜBERLEBT"};
+  }
+  function endingData(reason){
+    if(reason==="fired")return{title:"GEFEUERT 📦",copy:"Chef Brumm hat genug. Dein Firmenkonto wurde schneller deaktiviert als Mogels Antivirus.",stamp:"VERTRAG BEENDET",kind:"bad"};
+    if(reason==="asleep")return{title:"EINGESCHLAFEN 😴",copy:"Zu wenig Koffein. Du wachst unter dem Schreibtisch auf. Root nennt es Energiesparmodus.",stamp:"KAFFEE 0%",kind:"bad"};
+    const allSuccess=Story.totalQuestIds.every(id=>state.completed[id]?.success);
+    const happy=Story.promotionMoodIds.every(id=>moodFor(id)==="happy");
+    if(allSuccess&&happy)return{title:"BEFÖRDERUNG 🏆",copy:"Alle Tickets gelöst, alle Kolleg:innen zufrieden. Chef Brumm befördert dich zur gesamten IT-Abteilung – diesmal offiziell.",stamp:"BEFÖRDERT",kind:"good"};
+    if(state.kaffematPerfect)return{title:"KAFFEMAT 3000 ÜBERNIMMT ☕🤖",copy:"Perfekte Extraktion aktiviert BARISTA-OMEGA. KAFFEMAT übernimmt die Geschäftsführung. Erster Beschluss: kostenlose Doppel-Espressi.",stamp:"NEUE LEITUNG",kind:"secret"};
+    return{...rankForPatience(),kind:"normal"};
+  }
+  function endDay(reason){
+    if(state.ending)return;
+    state.ending=true;state.mode="ending";state.activeRun=false;
+    if(activeGameCleanup){try{activeGameCleanup();}catch(_){}activeGameCleanup=null;}
+    clearRuntimeTimers();dialogue=null;ui.dialogue.hidden=true;ui.bsod.hidden=true;ui.shell.hidden=true;ui.start.hidden=true;ui.end.hidden=false;
+    const data=endingData(reason),now=new Intl.DateTimeFormat("de-DE",{hour:"2-digit",minute:"2-digit",second:"2-digit"}).format(new Date());
+    const moodIds=["brumm","kevin","jana","kalk","mogel","root","kaffemat"];
+    ui.end.innerHTML=`<article class="punch-card">
+      <p class="end-kicker">ACME GMBH · STECHUHRKARTE · ${formatTime(state.time)}</p><h2 id="ending-title">${data.title}</h2><div class="stamp">${data.stamp}</div><p class="ending-copy">${data.copy}</p>
+      <div class="end-stats"><div class="stat-box"><span>TICKETS</span><b>${solvedCount()}/${Story.totalQuestIds.length}</b></div><div class="stat-box"><span>BRUMM</span><b>${Math.round(state.patience)}%</b></div><div class="stat-box"><span>KAFFEE</span><b>${Math.round(state.coffee)}%</b></div><div class="stat-box"><span>ESKALATIONEN</span><b>${state.stats.escalations}</b></div></div>
+      <div class="end-moods">${moodIds.map(id=>`<span class="end-mood">${Characters.data[id].short} ${moodEmoji(id)}</span>`).join("")}</div>
+      <div class="end-actions"><button id="restart-button" class="primary-button" type="button">NOCHMAL SPIELEN</button><span class="real-stamp-time">Ausgestempelt: ${now} Uhr · ${state.stats.penalties} Geduldspunkte verloren</span></div>
+    </article>`;
+    $("#restart-button",ui.end).addEventListener("click",startGame,{once:true});
+    if(data.kind==="good"||data.kind==="secret"||data.title.includes("ROOT-GOTT")){confetti(data.kind==="good"?90:66);Audio.play("good");}
+    else if(data.kind==="bad")Audio.play("bad");
+  }
+
+  /* ---------- Lifecycle ---------- */
+  function resetState(){
+    if(activeGameCleanup){try{activeGameCleanup();}catch(_){}activeGameCleanup=null;}
+    clearRuntimeTimers();ui.toasts.innerHTML="";ui.fx.innerHTML="";ui.bsod.hidden=true;ui.dialogue.hidden=true;state=freshState();dialogue=null;updateHud();
+  }
+  function startGame(){
+    resetState();Audio.init();ui.start.hidden=true;ui.end.hidden=true;ui.shell.hidden=false;state.mode="dialogue";updateHud();
+    ui.stage.innerHTML=`<div class="empty-queue" style="height:100%;border:0"><div><div class="radar"></div><b>NERDDESK WIRD GESTARTET…</b></div></div>`;
+    showDialogue(Story.opening,()=>{state.time=545;state.activeRun=true;startTimers();enterBoard();});
+  }
+  function showStart(){resetState();state.mode="start";ui.start.hidden=false;ui.shell.hidden=true;ui.end.hidden=true;Characters.renderAll(ui.start);}
+
+  /* Die Debug-Vorschau ist absichtlich nicht in der UI. Sie ermöglicht automatisierte QA aller Screens. */
+  function debugPreview(name){
+    resetState();ui.start.hidden=true;ui.end.hidden=true;ui.shell.hidden=false;state.activeRun=false;state.time=name==="board"?720:630;updateHud();
+    if(name==="board"){
+      state.mode="board";[Story.quests[2],Story.quests[4],Story.quests[5]].forEach(dispatchQuest);renderBoard();return;
+    }
+    if(name==="ending"){
+      state.patience=88;Story.totalQuestIds.forEach(id=>{state.completed[id]={success:true,at:1000};});Story.promotionMoodIds.forEach(id=>{state.moodScores[id]=1;});
+      state.kaffematPerfect=true;state.time=1020;state.ending=false;endDay("review");return;
+    }
+    const quest=allQuests.find(q=>q.minigame===name||q.id===name);if(quest)runMinigame(quest);
+  }
+
+  ui.startButton.addEventListener("click",startGame);
+  ui.startMute.addEventListener("click",()=>Audio.toggle());
+  ui.hudMute.addEventListener("click",()=>Audio.toggle());
+  ui.dialogueNext.addEventListener("click",nextDialogue);
+  document.addEventListener("keydown",event=>{
+    if(event.key!=="Enter")return;
+    if(!ui.start.hidden&&event.target.tagName!=="BUTTON")startGame();
+    else if(!ui.dialogue.hidden&&event.target.tagName!=="BUTTON")nextDialogue();
+  });
+
+  updateMuteButtons();updateHud();Characters.renderAll(document);
+  window.ITGameDebug={
+    start:startGame,showStart,preview:debugPreview,
+    jump(minutes){if(!state.ending)advanceTime(minutes);},
+    end(reason="review"){state.ending=false;endDay(reason);},
+    getState(){return JSON.parse(JSON.stringify(state));},
+    setResources(coffee,patience){state.coffee=coffee;state.patience=patience;updateHud();}
+  };
+})();

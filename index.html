@@ -1,258 +1,128 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="de">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <meta name="theme-color" content="#000000" />
-  <title>IT-Survival: Der 9-to-5 Simulator</title>
-  <!-- Optional: Tailwind via CDN. Alle Custom-Styles & Animationen leben in ./style.css -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="./style.css" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#090d18">
+  <meta name="description" content="IT-SURVIVAL: Der 9-to-5 Simulator – ein story-getriebenes Retro-Browsergame.">
+  <title>IT-SURVIVAL: Der 9-to-5 Simulator</title>
+  <link rel="stylesheet" href="./style.css">
+  <script defer src="./characters.js"></script>
+  <script defer src="./story.js"></script>
+  <script defer src="./minigames.js"></script>
+  <script defer src="./game.js"></script>
 </head>
 <body>
-  <div id="app">
+  <div id="app" class="app-shell">
+    <div class="scanlines" aria-hidden="true"></div>
+    <div id="fx-layer" class="fx-layer" aria-hidden="true"></div>
 
-    <!-- ================= HUD (ab Level 1 sticky oben) ================= -->
-    <header id="hud" style="display:none">
-      <div class="hud-top">
-        <span id="hud-level" class="hud-level">LVL 1/8</span>
-        <span id="hud-task" class="hud-task">HARDWARE-SETUP</span>
-        <span class="hud-clock">09:00</span>
-      </div>
-      <div class="hud-bars">
-        <div class="hud-item">
-          <span class="hud-icon">☕</span>
-          <div class="hud-bar"><div id="coffee-fill" class="hud-fill fill-coffee"></div></div>
-          <span id="coffee-value" class="hud-value">100</span>
+    <section id="start-screen" class="screen start-screen" aria-labelledby="game-title">
+      <div class="boot-window">
+        <div class="window-bar">
+          <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>NERDDESK OS // ACME-GMBH</span>
+          <button id="start-mute" class="icon-button" type="button" aria-label="Ton ausschalten" title="Ton umschalten">🔊</button>
         </div>
-        <div class="hud-item">
-          <span class="hud-icon">😡</span>
-          <div class="hud-bar"><div id="patience-fill" class="hud-fill fill-patience"></div></div>
-          <span id="patience-value" class="hud-value">100</span>
+        <div class="boot-content">
+          <p class="eyebrow">PERSONALAKTE #09–17 · ERSTER ARBEITSTAG</p>
+          <h1 id="game-title"><span>IT-SURVIVAL</span><small>Der 9-to-5 Simulator</small></h1>
+          <p class="hero-copy">Root ist krank. Der Drucker lügt. Du bist heute die gesamte IT-Abteilung.</p>
+
+          <div class="character-parade" aria-label="Die Belegschaft der ACME GmbH">
+            <canvas data-character="brumm" data-mood="neutral" aria-label="Chef Brumm"></canvas>
+            <canvas data-character="kevin" data-mood="happy" aria-label="Kevin aus dem Marketing"></canvas>
+            <canvas data-character="jana" data-mood="neutral" aria-label="Jana, Praktikantin"></canvas>
+            <canvas data-character="kalk" data-mood="neutral" aria-label="Frau Kalk aus der Buchhaltung"></canvas>
+            <canvas data-character="mogel" data-mood="neutral" aria-label="Mogel aus dem Vertrieb"></canvas>
+            <canvas data-character="root" data-mood="neutral" aria-label="Root, der Sysadmin"></canvas>
+          </div>
+
+          <div class="boot-terminal" aria-label="Systemmeldung">
+            <span class="prompt">&gt;</span>
+            <span id="boot-line">sysadmin.status = "KRANK";</span><span class="cursor" aria-hidden="true"></span>
+          </div>
+
+          <div class="start-actions">
+            <button id="start-button" class="primary-button big-button" type="button">
+              <span>ARBEITSTAG STARTEN</span><kbd>ENTER</kbd>
+            </button>
+            <p>Touch oder Maus · ca. 8–12 Minuten · Ton-Einstellung wird lokal gespeichert</p>
+          </div>
+
+          <div class="boot-footer">
+            <span><b>MISSION</b> 09:00 → 17:00 überleben</span>
+            <span><b>WARNUNG</b> Kaffee ist eine Ressource</span>
+          </div>
         </div>
       </div>
-    </header>
+    </section>
 
-    <!-- ================= LEVEL 0 : START ================= -->
-    <div id="level-0" class="level-container" style="display:flex">
-      <div class="boot-log">
-        <span>&gt; BIOS v4.2 ......... OK</span>
-        <span>&gt; RAM 16384 MB ...... OK</span>
-        <span>&gt; KAFFEE.MOD ....... GELADEN</span>
-        <span>&gt; boot it-survival.exe</span>
-      </div>
-      <h1 class="glitch" data-text="IT-SURVIVAL">IT-SURVIVAL</h1>
-      <p class="subtitle">// Der 9-to-5 Simulator</p>
-      <button id="btn-start" class="neon-btn pulse">▶ SCHICHT BEGINNEN</button>
-      <div class="start-hints">
-        <span>☕ Kaffee-Level im Blick behalten</span>
-        <span>😡 Den Boss nicht wütend machen</span>
-        <span>🖥 8 Aufgaben bis zum Feierabend</span>
-      </div>
-    </div>
-
-    <!-- ================= LEVEL 1 : PC-RÜCKSEITE / HDMI ================= -->
-    <div id="level-1" class="level-container" style="display:none">
-      <div class="panel-head">
-        <h2 class="level-title">AUFGABE 1 <span>// Monitor anschließen</span></h2>
-        <p class="level-desc">Der User meldet: <b>„Bildschirm bleibt schwarz!"</b><br />Tippen = Stecker drehen · Ziehen = Einstecken</p>
-      </div>
-
-      <div id="pc-back">
-        <!-- Netzteil oben -->
-        <div class="psu">
-          <div class="psu-fan"></div>
-          <span class="psu-label">PSU 650W</span>
+    <section id="game-shell" class="game-shell" hidden aria-label="Spielbereich">
+      <header class="hud">
+        <div class="hud-brand" aria-label="IT-Survival">
+          <span class="brand-mark">IT</span>
+          <span class="brand-copy"><b>SURVIVAL</b><small id="phase-label">MORGENSCHICHT</small></span>
         </div>
 
-        <!-- I/O-Panel des Mainboards -->
-        <div class="io-panel">
-          <span class="io-label">I/O · MAINBOARD</span>
-          <div class="io-grid">
-            <div class="io-port io-usb"><i></i><i></i></div>
-            <div class="io-port io-lan"><i></i></div>
-            <div class="io-port io-usb"><i></i><i></i></div>
-            <div class="io-port io-audio"><i class="au-g"></i><i class="au-p"></i><i class="au-b"></i></div>
-            <div id="port-mb" class="io-port io-hdmi" title="HDMI (Mainboard)"><i></i></div>
-            <div class="io-port io-vga"><i></i></div>
+        <div class="resource resource-coffee">
+          <div class="resource-label"><span>☕ KAFFEE</span><output id="coffee-value">100</output></div>
+          <div class="meter" role="progressbar" aria-label="Kaffee-Level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+            <i id="coffee-bar"></i>
           </div>
         </div>
 
-        <!-- PCIe-Blenden mit dedizierter GPU -->
-        <div class="pcie-area">
-          <div class="pcie-slot empty"></div>
-          <div id="gpu-bracket" class="pcie-slot gpu">
-            <span class="gpu-label">GPU</span>
-            <div id="port-gpu-hdmi" class="gpu-port gpu-hdmi"><i></i></div>
-            <div class="gpu-port gpu-dp"></div>
-            <div class="gpu-port gpu-dp"></div>
-          </div>
-          <div class="pcie-slot empty"></div>
-        </div>
-      </div>
-
-      <div id="cable-tray">
-        <div id="cable" class="cable">
-          <div id="cable-inner" class="cable-inner">
-            <div class="plug-head"><div class="plug-pins"></div></div>
-            <div class="plug-body"><span>HDMI</span></div>
-            <div class="cord"></div>
+        <div class="resource resource-patience">
+          <div class="resource-label"><span>😡 BRUMM</span><output id="patience-value">100</output></div>
+          <div class="meter" role="progressbar" aria-label="Boss-Geduld" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+            <i id="patience-bar"></i>
           </div>
         </div>
-        <p class="mini-hint">🔌 Stecker liegt lose herum – wo gehört er hin?</p>
-      </div>
-    </div>
 
-    <!-- ================= LEVEL 2 : TICKET-TINDER ================= -->
-    <div id="level-2" class="level-container" style="display:none">
-      <div class="panel-head">
-        <h2 class="level-title">AUFGABE 2 <span>// First-Level Support</span></h2>
-        <p class="level-desc">◀ <b>links = ignorieren</b> · <b>rechts = eskalieren</b> ▶</p>
-      </div>
-      <div id="card-stack"></div>
-      <div class="swipe-labels">
-        <span class="swipe-label left">🗑 IGNORIEREN</span>
-        <span id="counter-2">0 / 5</span>
-        <span class="swipe-label right">🚨 ESKALIEREN</span>
-      </div>
-    </div>
-
-    <!-- ================= LEVEL 3 : PASSWORT-PING-PONG ================= -->
-    <div id="level-3" class="level-container" style="display:none">
-      <div class="panel-head">
-        <h2 class="level-title">AUFGABE 3 <span>// Passwort-Ping-Pong</span></h2>
-        <p class="level-desc">Neues Admin-Passwort setzen – unter Zeitdruck.</p>
-      </div>
-      <div class="timer-wrap">
-        <div id="timer-fill"></div>
-        <span id="timer-text">20s</span>
-      </div>
-      <input id="pw-input" type="text" autocomplete="off" placeholder="Neues Passwort eingeben…" />
-      <ul id="rules">
-        <li id="rule-case" class="rule"><span class="box"></span>Mindestens 1 Großbuchstabe (A-Z)</li>
-        <li id="rule-special" class="rule"><span class="box"></span>Mindestens 1 Sonderzeichen (!@#$%^&amp;*)</li>
-        <li id="rule-forbidden" class="rule"><span class="box"></span>Nicht "Passwort" und nicht "admin"</li>
-        <li id="rule-emoji" class="rule"><span class="box"></span>Muss ein Emoji enthalten 😜</li>
-      </ul>
-      <button id="btn-save-pw" class="neon-btn" style="display:none">💾 SPEICHERN</button>
-    </div>
-
-    <!-- ================= LEVEL 4 : VIREN-JAGD ================= -->
-    <div id="level-4" class="level-container" style="display:none">
-      <div class="panel-head">
-        <h2 class="level-title">AUFGABE 4 <span>// Viren-Jagd</span></h2>
-        <p class="level-desc">Lösche <b>10 Viren</b> 😈 – Systemdateien 📁 bloß nicht anfassen!</p>
-      </div>
-      <div id="desktop">
-        <div class="taskbar">
-          <span>🪟 Start</span>
-          <span>Viren: <b id="kill-count">0</b>/10</span>
-          <span>🛡 Defender: AKTIV</span>
+        <div class="clock-card" aria-label="In-Game-Uhrzeit">
+          <span id="clock">09:00</span>
+          <small id="quest-counter">0/10 GELÖST</small>
         </div>
-      </div>
-    </div>
 
-    <!-- ================= LEVEL 5 : LOG-ANALYSE (NEU) ================= -->
-    <div id="level-5" class="level-container" style="display:none">
-      <div class="panel-head">
-        <h2 class="level-title">AUFGABE 5 <span>// Log-Analyse</span></h2>
-        <p class="level-desc">Der Server spuckt Logs. Markiere <b>6 echte ERROR-Zeilen</b> – WARN/INFO ignorieren!</p>
-      </div>
-      <div class="timer-wrap small">
-        <div id="log-timer-fill"></div>
-        <span id="log-timer-text">30s</span>
-      </div>
-      <div id="log-terminal">
-        <div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span> /var/log/server.log</div>
-        <div id="log-lines"></div>
-      </div>
-      <p class="mini-hint">Gefundene ERROR: <b id="log-count">0</b>/6</p>
-    </div>
+        <button id="hud-mute" class="icon-button hud-button" type="button" aria-label="Ton ausschalten" title="Ton umschalten">🔊</button>
+      </header>
 
-    <!-- ================= LEVEL 6 : KAFFEE-NOTFALL (NEU) ================= -->
-    <div id="level-6" class="level-container" style="display:none">
-      <div class="panel-head">
-        <h2 class="level-title">AUFGABE 6 <span>// Kaffee-Notfall</span></h2>
-        <p class="level-desc">Dein Kaffee ist fast leer! <b>Halte den Hahn gedrückt</b> und stoppe im grünen Bereich – nicht überlaufen!</p>
-      </div>
-      <div class="machine">
-        <div class="machine-top">☕ KAFFEMAT 3000</div>
-        <div class="cup-zone">
-          <div class="zone-mark"></div>
-          <div class="cup">
-            <div id="coffee-liquid"></div>
+      <main id="main-stage" class="main-stage" tabindex="-1"></main>
+      <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+    </section>
+
+    <section id="end-screen" class="screen end-screen" hidden aria-labelledby="ending-title"></section>
+
+    <div id="dialogue-layer" class="dialogue-layer" hidden role="dialog" aria-modal="true" aria-labelledby="dialogue-name">
+      <div class="dialogue-box">
+        <div class="dialogue-meta">
+          <span id="dialogue-time">09:00</span>
+          <span id="dialogue-step">1 / 2</span>
+        </div>
+        <div class="dialogue-row">
+          <div class="portrait-frame large">
+            <canvas id="dialogue-portrait" data-character="brumm" data-mood="neutral" aria-hidden="true"></canvas>
+            <span id="dialogue-mood" class="mood-badge">😐</span>
+          </div>
+          <div id="dialogue-bubble" class="speech-bubble">
+            <strong id="dialogue-name">CHEF BRUMM</strong>
+            <p id="dialogue-text"></p>
           </div>
         </div>
-        <button id="btn-brew">▼ HALTEN ZUM FÜLLEN ▼</button>
+        <button id="dialogue-next" class="primary-button dialogue-next" type="button">WEITER <span>›</span></button>
       </div>
     </div>
 
-    <!-- ================= LEVEL 7 : RAM-UPGRADE ================= -->
-    <div id="level-7" class="level-container" style="display:none">
-      <div class="panel-head">
-        <h2 class="level-title">AUFGABE 7 <span>// RAM-Upgrade</span></h2>
-        <p id="phase-label" class="level-desc">Phase 1/3: Wische den Staub vom Mainboard!</p>
-      </div>
-      <div id="clean-area">
-        <div id="slot">
-          <div class="slot-notch"></div>
-          <span class="slot-label">DDR4 SLOT</span>
-        </div>
-        <button id="clip-left" class="clip" disabled>⬅</button>
-        <button id="clip-right" class="clip" disabled>➡</button>
-        <div id="dust"></div>
-      </div>
-      <div id="ram" class="ram" style="display:none">
-        <div id="ram-inner" class="ram-inner"></div>
-      </div>
-      <p id="ram-hint" class="mini-hint" style="display:none">Tippen = Riegel drehen · Ziehen = Einsetzen</p>
-    </div>
-
-    <!-- ================= LEVEL 8 : KAFFEE-QUIZ ================= -->
-    <div id="level-8" class="level-container" style="display:none">
-      <div class="panel-head">
-        <h2 class="level-title">AUFGABE 8 <span>// Fachwissen-Check</span></h2>
-      </div>
-      <div class="chat">
-        <div class="bubble colleague">🧑‍💼 <b>Marketing-Kollege:</b><br />Welche dieser Sprachen ist leider absolut KEINE Programmiersprache?</div>
-        <div id="colleague-reply" class="bubble reply" style="display:none">🧑‍💼 Sicher? 🤨</div>
-      </div>
-      <div class="answers">
-        <button class="answer-btn" data-answer="C">C</button>
-        <button class="answer-btn" data-answer="Rust">Rust</button>
-        <button class="answer-btn" data-answer="Assembly">Assembly</button>
-        <button class="answer-btn" data-answer="HTML">HTML</button>
+    <div id="bsod-overlay" class="bsod-overlay" hidden aria-live="assertive">
+      <div>
+        <b>:(</b>
+        <p>Dein PC hat ein Problem festgestellt.<br><small>Ursache: SYSTEMDATEI_WEGGEKLICKT</small></p>
       </div>
     </div>
 
-    <!-- ================= LEVEL 9 : FEIERABEND ================= -->
-    <div id="level-9" class="level-container" style="display:none">
-      <div class="punch-card">
-        <p class="card-head">⚙ ACME GMBH — ZEITERFASSUNG</p>
-        <h2 id="end-title">FEIERABEND</h2>
-        <p id="end-rank"></p>
-        <p id="end-detail"></p>
-        <p class="stamp">GESTEMPELT: <span id="stamp-time">17:00</span></p>
-        <button id="btn-restart" class="neon-btn">↻ NOCHMAL SPIELEN</button>
-      </div>
-    </div>
-
+    <noscript>
+      <div class="noscript">Dieses Büro benötigt JavaScript. Root wäre enttäuscht.</div>
+    </noscript>
   </div>
-
-  <!-- ================= GLOBALE OVERLAYS ================= -->
-  <div id="toast"></div>
-  <div id="flash-red"></div>
-  <div id="flash-green"></div>
-  <div id="flicker"></div>
-  <div id="bsod">
-    <div>
-      <p class="bsod-face">:(</p>
-      <p>Ihr PC hat ein Problem festgestellt …<br />Du hast eine SYSTEMDATEI gelöscht.</p>
-      <p class="bsod-code">STOP: 0x0000ID10T</p>
-    </div>
-  </div>
-  <div id="confetti-layer"></div>
-
-  <script src="./game.js"></script>
 </body>
 </html>
