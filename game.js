@@ -1,737 +1,830 @@
-/* ============================================================
-   IT-Survival: Der 9-to-5 Simulator - game.js
-   Pure Vanilla JS - No dependencies - GitHub Pages ready
-   ============================================================ */
+/* =========================================================
+   IT-SURVIVAL : Der 9-to-5 Simulator — Game Logic & State
+   Vanilla JS, keine Abhängigkeiten, keine Build-Tools
+   ========================================================= */
+
 'use strict';
 
-// ---- GLOBAL STATE ----
-const GS = {
-  currentLevel: 0,
-  bossPatience: 100,
-  coffeeLevel:  100,
-  coffeeTimer:  null,
-  virusTimer:   null,
-  pwCountdown:  null,
-  pwTimeLeft:   20,
-  virusKilled:  0,
-  gameOver:     false,
+/* =========================================================
+   1. GLOBAL STATE
+   ========================================================= */
+const gameState = {
+  currentLevel: 0,     // 0 = Start, 1-6 = Minigames, 7 = Endscreen
+  bossPatience: 100,   // sinkt bei Fehlern
+  coffeeLevel: 100,    // sinkt alle 2s um 1, Level-Abschluss füllt auf
+  won: false,
+  timers: { coffee: null, pw: null, virus: null },
 };
 
-// ---- UTILITIES ----
-const el  = (id)           => document.getElementById(id);
-const qsa = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
-const clamp = (v, lo, hi)  => Math.max(lo, Math.min(hi, v));
+const COFFEE_TICK_MS = 2000;   // Kaffee-Intervall
+const COFFEE_PER_TICK = 1;     // Verlust pro Tick
+const COFFEE_REFILL = 35;      // Belohnung pro Level-Abschluss
+const LOW_WARN = 20;
 
-let toastTimer = null;
-function showToast(msg, ms = 2800) {
-  const t = el('toast');
-  t.textContent = msg;
-  t.className = 'toast-visible fixed top-16 left-1/2 z-[999] -translate-x-1/2 bg-gray-900 border border-yellow-500 text-yellow-300 text-xs px-4 py-2 rounded-xl max-w-[82vw] text-center shadow-lg pointer-events-none';
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    t.className = t.className.replace('toast-visible', 'toast-hidden');
-  }, ms);
+/* =========================================================
+   2. HELPERS
+   ========================================================= */
+const $ = (id) => document.getElementById(id);
+
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+function setDisplay(el, show, flex) {
+  el.style.display = show ? (flex ? 'flex' : 'block') : 'none';
 }
 
-function flash(type = 'success') {
-  const f = el('flash');
-  f.className = '';
-  void f.offsetWidth; // force reflow
-  f.className = 'fixed inset-0 z-[998] pointer-events-none flash-' + type;
+let toastTimeout = null;
+function showToast(msg, type) {
+  const toast = $('toast');
+  toast.textContent = msg;
+  toast.className = type === 'good' ? 'show good' : 'show';
+  clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => { toast.className = ''; }, 2200);
 }
 
+function playOverlay(id) {
+  const el = $(id);
+  el.classList.remove('play');
+  void el.offsetWidth; // Reflow → Animation neu starten
+  el.classList.add('play');
+}
+
+function flashRed() { playOverlay('flash-red'); }
+function flashGreen() { playOverlay('flash-green'); }
+function flickerScreen() { playOverlay('flicker'); }
+
+let bsodTimeout = null;
+function showBSOD(ms) {
+  const b = $('bsod');
+  b.classList.add('show');
+  clearTimeout(bsodTimeout);
+  bsodTimeout = setTimeout(() => b.classList.remove('show'), ms || 1000);
+}
+
+function confetti() {
+  const layer = $('confetti-layer');
+  const colors = ['#00ff41', '#4fc3f7', '#ff2a6d', '#ffd54f', '#ffffff', '#ff8a65'];
+  for (let i = 0; i < 90; i++) {
+    const c = document.createElement('div');
+    c.className = 'confetti';
+    c.style.left = Math.random() * 100 + 'vw';
+    c.style.background = colors[i % colors.length];
+    c.style.animationDuration = (1.6 + Math.random() * 1.6) + 's';
+    c.style.animationDelay = (Math.random() * 0.4) + 's';
+    c.style.transform = 'rotate(' + Math.random() * 360 + 'deg)';
+    layer.appendChild(c);
+    setTimeout(() => c.remove(), 3800);
+  }
+}
+
+/* =========================================================
+   3. HUD
+   ========================================================= */
 function updateHUD() {
-  const c = GS.coffeeLevel, b = GS.bossPatience;
-  el('bar-coffee').style.width = c + '%';
-  el('txt-coffee').textContent = c;
-  el('bar-boss').style.width   = b + '%';
-  el('txt-boss').textContent   = b;
-  el('bar-coffee').style.background = c > 50 ? '#22c55e' : c > 25 ? '#eab308' : '#ef4444';
-  el('bar-boss').style.background   = b > 50 ? '#ef4444' : b > 25 ? '#f97316' : '#7f1d1d';
+  const c = clamp(gameState.coffeeLevel, 0, 100);
+  const p = clamp(gameState.bossPatience, 0, 100);
+  const coffeeFill = $('coffee-fill');
+  const patienceFill = $('patience-fill');
+  coffeeFill.style.width = c + '%';
+  patienceFill.style.width = p + '%';
+  $('coffee-value').textContent = c;
+  $('patience-value').textContent = p;
+  coffeeFill.classList.toggle('low-coffee', c <= LOW_WARN && c > 0);
+  patienceFill.classList.toggle('low-patience', p <= LOW_WARN && p > 0);
 }
 
-function showLevel(n) {
-  qsa('.level-container').forEach(d => {
-    d.style.display = 'none';
-    d.classList.remove('active');
-  });
-  const lvl = el('level-' + n);
-  lvl.style.display = 'flex';
-  lvl.classList.add('active');
-  GS.currentLevel = n;
-  el('hud').classList.toggle('hidden', n === 0 || n === 7);
+function changePatience(delta, reason) {
+  if (gameState.currentLevel <= 0 || gameState.currentLevel >= 7) return;
+  gameState.bossPatience = clamp(gameState.bossPatience + delta, 0, 100);
   updateHUD();
+  if (reason) showToast(reason + '  (Boss ' + delta + ')');
+  flashRed();
+  checkGameOver();
 }
 
-function damageBoss(amount) {
-  if (GS.gameOver) return;
-  GS.bossPatience = clamp(GS.bossPatience - amount, 0, 100);
-  updateHUD();
-  flash('error');
-  if (GS.bossPatience <= 0) endGame(false);
+function checkGameOver() {
+  if (gameState.currentLevel <= 0 || gameState.currentLevel >= 7) return false;
+  if (gameState.coffeeLevel <= 0 || gameState.bossPatience <= 0) {
+    gameState.won = false;
+    gotoLevel(7);
+    return true;
+  }
+  return false;
 }
 
-function refillCoffee(amount) {
-  GS.coffeeLevel = clamp(GS.coffeeLevel + amount, 0, 100);
-  updateHUD();
-}
-
-function startCoffeeDrain() {
-  stopCoffeeDrain();
-  GS.coffeeTimer = setInterval(() => {
-    if (GS.gameOver) return;
-    GS.coffeeLevel = clamp(GS.coffeeLevel - 1, 0, 100);
+/* Kaffee-Loop: sinkt alle 2 Sekunden um 1 */
+function startCoffeeLoop() {
+  stopTimer('coffee');
+  gameState.timers.coffee = setInterval(() => {
+    if (gameState.currentLevel <= 0 || gameState.currentLevel >= 7) return;
+    gameState.coffeeLevel = clamp(gameState.coffeeLevel - COFFEE_PER_TICK, 0, 100);
     updateHUD();
-    if (GS.coffeeLevel <= 0) endGame(false);
-  }, 2000);
+    checkGameOver();
+  }, COFFEE_TICK_MS);
 }
-function stopCoffeeDrain() {
-  clearInterval(GS.coffeeTimer);
-  GS.coffeeTimer = null;
+
+function stopTimer(key) {
+  if (gameState.timers[key]) {
+    clearInterval(gameState.timers[key]);
+    gameState.timers[key] = null;
+  }
 }
 
 function stopAllTimers() {
-  stopCoffeeDrain();
-  clearInterval(GS.virusTimer);  GS.virusTimer  = null;
-  clearInterval(GS.pwCountdown); GS.pwCountdown = null;
+  stopTimer('coffee');
+  stopTimer('pw');
+  stopTimer('virus');
 }
 
-// ---- CONFETTI ----
-function spawnConfetti() {
-  const colors = ['#4ade80','#facc15','#60a5fa','#f472b6','#fb923c','#a78bfa'];
-  const cont = el('confetti-container');
-  for (let i = 0; i < 70; i++) {
-    const b = document.createElement('div');
-    b.className = 'confetti-bit';
-    b.style.setProperty('--dur',   (1.1 + Math.random() * 1.2) + 's');
-    b.style.setProperty('--delay', (Math.random() * 0.7) + 's');
-    b.style.left       = (Math.random() * 100) + 'vw';
-    b.style.top        = '-12px';
-    b.style.background = colors[Math.floor(Math.random() * colors.length)];
-    if (Math.random() > 0.5) b.style.borderRadius = '50%';
-    cont.appendChild(b);
-    setTimeout(() => b.remove(), 2500);
-  }
-}
+/* =========================================================
+   4. LEVEL-WECHSEL
+   ========================================================= */
+const levelInits = {};
+const levelCleanups = {};
 
-// ---- Touch/Mouse unified helpers ----
-const getTX = (e) => (e.touches       ? e.touches[0]        : e).clientX;
-const getTY = (e) => (e.touches       ? e.touches[0]        : e).clientY;
-const getCX = (e) => (e.changedTouches? e.changedTouches[0] : e).clientX;
-const getCY = (e) => (e.changedTouches? e.changedTouches[0] : e).clientY;
+function gotoLevel(n) {
+  const prev = $('level-' + gameState.currentLevel);
+  if (prev) setDisplay(prev, false);
+  const cleanup = levelCleanups[gameState.currentLevel];
+  if (cleanup) cleanup();
 
-function addDown(target, fn) {
-  target.addEventListener('mousedown',  fn);
-  target.addEventListener('touchstart', fn, { passive: true });
-}
-function addMove(target, fn) {
-  target.addEventListener('mousemove', fn);
-  target.addEventListener('touchmove', fn, { passive: false });
-}
-function addUp(target, fn) {
-  target.addEventListener('mouseup',  fn);
-  target.addEventListener('touchend', fn, { passive: false });
-}
+  gameState.currentLevel = n;
 
-// ============================================================
-// LEVEL 0 - START SCREEN
-// ============================================================
-function initLevel0() {
-  const btn   = el('btn-start');
-  const fresh = btn.cloneNode(true);
-  btn.replaceWith(fresh);
-  const trigger = (e) => { e.preventDefault(); startGame(); };
-  el('btn-start').addEventListener('click',    trigger);
-  el('btn-start').addEventListener('touchend', trigger);
-}
-
-function startGame() {
-  GS.bossPatience = 100;
-  GS.coffeeLevel  = 100;
-  GS.virusKilled  = 0;
-  GS.gameOver     = false;
-  updateHUD();
-  startCoffeeDrain();
-  showLevel(1);
-  initLevel1();
-}
-
-// ============================================================
-// LEVEL 1 - HDMI CABLE
-// ============================================================
-let hdmi = { flips: 0, dragged: false, dragClone: null };
-
-function initLevel1() {
-  hdmi.flips   = 0;
-  hdmi.dragged = false;
-
-  ['hdmi-cable','port-mainboard','port-gpu'].forEach(id => {
-    const orig  = el(id);
-    const fresh = orig.cloneNode(true);
-    orig.replaceWith(fresh);
-  });
-
-  updateFlipBadge();
-
-  const cable = el('hdmi-cable');
-  const mb    = el('port-mainboard');
-  const gp    = el('port-gpu');
-
-  cable.addEventListener('click', handleCableTap);
-  cable.addEventListener('touchend', (e) => {
-    if (hdmi.dragged) { hdmi.dragged = false; return; }
-    e.preventDefault();
-    handleCableTap(e);
-  });
-
-  let startX = 0, startY = 0, clone = null;
-  cable.addEventListener('touchstart', (e) => {
-    hdmi.dragged = false;
-    const t = e.touches[0];
-    startX = t.clientX; startY = t.clientY;
-    const r = cable.getBoundingClientRect();
-    clone = cable.cloneNode(true);
-    clone.style.cssText = 'position:fixed;z-index:9999;pointer-events:none;opacity:0.82;margin:0;width:' + r.width + 'px;left:' + r.left + 'px;top:' + r.top + 'px;';
-    document.body.appendChild(clone);
-  }, { passive: true });
-
-  cable.addEventListener('touchmove', (e) => {
-    e.preventDefault();
-    if (!clone) return;
-    const t = e.touches[0];
-    if (Math.abs(t.clientX - startX) > 8 || Math.abs(t.clientY - startY) > 8) hdmi.dragged = true;
-    const r = cable.getBoundingClientRect();
-    clone.style.left = (t.clientX - r.width / 2) + 'px';
-    clone.style.top  = (t.clientY - r.height / 2) + 'px';
-  }, { passive: false });
-
-  cable.addEventListener('touchend', (e) => {
-    if (clone) { clone.remove(); clone = null; }
-    if (!hdmi.dragged) return;
-    const t   = e.changedTouches[0];
-    const hit = document.elementFromPoint(t.clientX, t.clientY);
-    const zone = hit && hit.closest('.drop-zone');
-    if (zone) handleDrop(zone.id);
-  });
-
-  cable.setAttribute('draggable', 'true');
-  cable.addEventListener('dragstart', (e) => {
-    hdmi.dragged = true;
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', 'hdmi');
-  });
-  [mb, gp].forEach(p => {
-    p.addEventListener('dragover', (e) => e.preventDefault());
-    p.addEventListener('drop',     (e) => { e.preventDefault(); handleDrop(p.id); });
-  });
-}
-
-function handleCableTap(e) {
-  hdmi.flips++;
-  updateFlipBadge();
-  el('hdmi-cable').style.transform = 'rotate(' + (hdmi.flips % 2 === 1 ? 180 : 0) + 'deg)';
-}
-
-function updateFlipBadge() {
-  const b = el('flip-badge');
-  if (b) b.textContent = (hdmi.flips % 2 === 0) ? '0°' : '180°';
-}
-
-function handleDrop(portId) {
-  if (portId === 'port-mainboard') {
-    showToast('❌ Falscher Port! Die GPU ist die richtige Wahl.');
-    damageBoss(15);
-    return;
-  }
-  if (portId === 'port-gpu') {
-    if (hdmi.flips < 2) {
-      showToast('🔌 Passt nicht. Dreh das Kabel erst mindestens 1x um!');
-      return;
-    }
-    flash('success');
-    refillCoffee(20);
-    setTimeout(() => { showLevel(2); initLevel2(); }, 600);
-  }
-}
-
-// ============================================================
-// LEVEL 2 - TICKET TINDER
-// ============================================================
-const TICKETS = [
-  { id: 'TK-001', text: '🪑 Mein Stuhl dreht sich zu schnell.',            isDumb: true  },
-  { id: 'TK-002', text: '🔥 Produktionsdatenbank brennt! Alle Daten weg!',  isDumb: false },
-  { id: 'TK-003', text: '☕ Tastatur nach Kaffeebad — jetzt Kaffeepause.',  isDumb: true  },
-  { id: 'TK-004', text: '🌐 Haupt-Webserver seit 12 Min. offline!',         isDumb: false },
-  { id: 'TK-005', text: '🗑 Ich glaub ich hab das Internet gelöscht.',      isDumb: true  },
-];
-
-let tk = { idx: 0, done: 0, busy: false };
-
-function initLevel2() {
-  tk.idx = 0; tk.done = 0; tk.busy = false;
-  el('ticket-progress').textContent = '0 / 5';
-  renderTicketStack();
-}
-
-function renderTicketStack() {
-  const stack = el('ticket-stack');
-  stack.innerHTML = '';
-  const remaining = TICKETS.slice(tk.idx);
-  if (!remaining.length) return;
-  const visible = remaining.slice(0, 3);
-  visible.forEach((ticket, i) => {
-    const isTop  = i === visible.length - 1;
-    const offset = visible.length - 1 - i;
-    const card   = document.createElement('div');
-    card.className = 'ticket-card';
-    card.style.zIndex    = String(i + 1);
-    card.style.transform = 'rotate(' + ((offset - 1) * 2.5) + 'deg) scale(' + (0.94 + i * 0.03) + ')';
-    card.style.opacity   = isTop ? '1' : String(0.55 + i * 0.2);
-    card.innerHTML =
-      '<span class="t-priority ' + (ticket.isDumb ? 'text-yellow-600' : 'text-red-500') + '">' +
-      (ticket.isDumb ? '🟡 LOW PRIORITY' : '🔴 CRITICAL') + '</span>' +
-      '<p class="t-text">' + ticket.text + '</p>' +
-      '<span class="t-id">' + ticket.id + '</span>';
-    if (isTop) attachSwipe(card, ticket);
-    stack.appendChild(card);
-  });
-}
-
-function attachSwipe(card, ticket) {
-  let startX = 0, dx = 0, active = false;
-
-  const begin = (e) => { if (tk.busy) return; startX = getTX(e); dx = 0; active = true; };
-  const move  = (e) => {
-    if (!active || tk.busy) return;
-    e.preventDefault();
-    dx = getTX(e) - startX;
-    card.style.transform  = 'translateX(' + dx + 'px) rotate(' + (dx * 0.07) + 'deg)';
-    card.style.background = dx > 35 ? 'rgba(74,222,128,0.12)' : dx < -35 ? 'rgba(239,68,68,0.12)' : '#0f172a';
-  };
-  const end = (e) => {
-    if (!active || tk.busy) return;
-    active = false;
-    if (Math.abs(dx) > 75) commitSwipe(card, ticket, dx > 0);
-    else { card.style.transform = ''; card.style.background = '#0f172a'; }
-    dx = 0;
-  };
-
-  addDown(card, begin);
-  addMove(card, move);
-  addUp  (card, end);
-  card.addEventListener('mouseleave', (e) => { if (active) end(e); });
-}
-
-function commitSwipe(card, ticket, swipedRight) {
-  tk.busy = true;
-  const correct = swipedRight ? !ticket.isDumb : ticket.isDumb;
-  if (!correct) {
-    damageBoss(10);
-    showToast(swipedRight
-      ? '❌ Nicht eskalieren – das ist kein kritisches Ticket!'
-      : '❌ Nicht ignorieren – das ist ein kritisches Problem!');
-  }
-  card.classList.add(swipedRight ? 'swipe-right-anim' : 'swipe-left-anim');
-  setTimeout(() => {
-    tk.idx++; tk.done++;
-    el('ticket-progress').textContent = tk.done + ' / 5';
-    if (tk.done >= 5) {
-      flash('success');
-      refillCoffee(20);
-      setTimeout(() => { showLevel(3); initLevel3(); }, 500);
-    } else {
-      renderTicketStack();
-      tk.busy = false;
-    }
-  }, 390);
-}
-
-// ============================================================
-// LEVEL 3 - PASSWORD
-// ============================================================
-const PW_RULES = [
-  { id: 'rule-0', test: (v) => /[A-Z]/.test(v) },
-  { id: 'rule-1', test: (v) => /[!@#$%^&*]/.test(v) },
-  { id: 'rule-2', test: (v) => v.length > 0 && !/(passwort|admin)/i.test(v) },
-  { id: 'rule-3', test: (v) => /\p{Emoji_Presentation}/u.test(v) },
-];
-
-function initLevel3() {
-  GS.pwTimeLeft = 20;
-  el('pw-timer').textContent = '20';
-  el('pw-save').classList.add('hidden');
-  PW_RULES.forEach(r => el(r.id).classList.remove('ok'));
-
-  const inp   = el('pw-input');
-  const fresh = inp.cloneNode(true);
-  fresh.value = '';
-  inp.replaceWith(fresh);
-  el('pw-input').addEventListener('input', checkPassword);
-
-  const sb   = el('pw-save');
-  const sbf  = sb.cloneNode(true);
-  sb.replaceWith(sbf);
-  el('pw-save').addEventListener('click', () => {
-    clearInterval(GS.pwCountdown);
-    flash('success');
-    refillCoffee(20);
-    setTimeout(() => { showLevel(4); initLevel4(); }, 550);
-  });
-
-  clearInterval(GS.pwCountdown);
-  GS.pwCountdown = setInterval(() => {
-    GS.pwTimeLeft--;
-    el('pw-timer').textContent = GS.pwTimeLeft;
-    if (GS.pwTimeLeft <= 0) {
-      clearInterval(GS.pwCountdown);
-      damageBoss(20);
-      showToast('⏰ Zeit abgelaufen! −20 Boss-Geduld. Nochmal!');
-      setTimeout(initLevel3, 1800);
-    }
-  }, 1000);
-}
-
-function checkPassword(e) {
-  const v = e.target.value;
-  let allOk = true;
-  PW_RULES.forEach(r => {
-    const ok = r.test(v);
-    el(r.id).classList.toggle('ok', ok);
-    if (!ok) allOk = false;
-  });
-  el('pw-save').classList.toggle('hidden', !allOk);
-}
-
-// ============================================================
-// LEVEL 4 - WHACK-A-MOLE
-// ============================================================
-function initLevel4() {
-  GS.virusKilled = 0;
-  el('virus-count').textContent = '0';
-  el('bsod').classList.add('hidden');
-
-  const desk = el('win-desktop');
-  qsa('.desktop-icon', desk).forEach(i => i.remove());
-
-  const clockEl  = el('desktop-clock');
-  const tickClock = () => {
-    if (GS.currentLevel !== 4) return;
-    clockEl.textContent = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-  };
-  tickClock();
-
-  clearInterval(GS.virusTimer);
-  GS.virusTimer = setInterval(() => {
-    if (GS.currentLevel !== 4) { clearInterval(GS.virusTimer); return; }
-    tickClock();
-    spawnIcon(desk);
-  }, 800);
-}
-
-function spawnIcon(desk) {
-  const isVirus = Math.random() < 0.52;
-  const icon    = document.createElement('div');
-  icon.className    = 'desktop-icon';
-  icon.textContent  = isVirus ? '😈' : (Math.random() > 0.5 ? '📁' : '📄');
-  icon.dataset.virus = isVirus ? '1' : '0';
-
-  const pad = 36;
-  const dw  = Math.max(desk.offsetWidth  - pad * 2, 10);
-  const dh  = Math.max(desk.offsetHeight - pad * 2 - 26, 10);
-  icon.style.left = (pad + Math.floor(Math.random() * dw)) + 'px';
-  icon.style.top  = (pad + Math.floor(Math.random() * dh)) + 'px';
-
-  let handled = false;
-  const autoKill = setTimeout(() => { if (!handled) icon.remove(); }, 2000);
-
-  const handle = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (handled) return;
-    handled = true;
-    clearTimeout(autoKill);
-    if (isVirus) {
-      icon.classList.add('icon-kill');
-      burstParticles(e);
-      setTimeout(() => icon.remove(), 310);
-      GS.virusKilled++;
-      el('virus-count').textContent = GS.virusKilled;
-      if (GS.virusKilled >= 10) {
-        clearInterval(GS.virusTimer);
-        flash('success');
-        refillCoffee(25);
-        setTimeout(() => { showLevel(5); initLevel5(); }, 600);
-      }
-    } else {
-      icon.remove();
-      showBSOD();
-      damageBoss(25);
-    }
-  };
-
-  icon.addEventListener('touchend', handle, { passive: false });
-  icon.addEventListener('click',    handle);
-  desk.appendChild(icon);
-}
-
-function burstParticles(e) {
-  const bx = getCX(e), by = getCY(e);
-  ['💥', '✨', '⚡', '🔥'].forEach((emoji, i) => {
-    const p = document.createElement('div');
-    p.className   = 'particle';
-    p.textContent = emoji;
-    p.style.left  = (bx + (i % 2 === 0 ? -18 : 18)) + 'px';
-    p.style.top   = by + 'px';
-    p.style.animationDelay = (i * 50) + 'ms';
-    document.body.appendChild(p);
-    setTimeout(() => p.remove(), 750);
-  });
-}
-
-function showBSOD() {
-  el('bsod').classList.remove('hidden');
-  setTimeout(() => el('bsod').classList.add('hidden'), 1100);
-}
-
-// ============================================================
-// LEVEL 5 - RAM UPGRADE
-// ============================================================
-function initLevel5() {
-  let phase      = 1;
-  let wipeDist   = 0, wipeActive = false, prevX = 0, prevY = 0;
-  let clampL     = false, clampR = false, clampTimer = null;
-  let ramAngle   = 0;
-  let ramDragClone = null, ramDragging = false;
-
-  const dustEl     = el('dust-overlay');
-  const slotEl     = el('ram-slot');
-  const stickEl    = el('ram-stick');
-  const phaseLabel = el('ram-phase-label');
-  const instrEl    = el('ram-instruction');
-
-  dustEl.style.opacity        = '1';
-  dustEl.style.pointerEvents  = 'auto';
-  el('clamp-left').classList.add('hidden');
-  el('clamp-right').classList.add('hidden');
-  stickEl.classList.add('hidden');
-  slotEl.classList.remove('slot-ready');
-  el('ram-angle-badge').textContent = '0°';
-
-  const wipeStart = (e) => { if (phase !== 1) return; wipeActive = true; prevX = getTX(e); prevY = getTY(e); };
-  const wipeMove  = (e) => {
-    if (!wipeActive || phase !== 1) return;
-    e.preventDefault();
-    const nx = getTX(e), ny = getTY(e);
-    wipeDist += Math.hypot(nx - prevX, ny - prevY);
-    prevX = nx; prevY = ny;
-    dustEl.style.opacity = String(Math.max(0, 1 - wipeDist / 650));
-    if (wipeDist >= 650) goPhase2();
-  };
-  const wipeEnd = () => { wipeActive = false; };
-
-  addDown(dustEl, wipeStart);
-  addMove(dustEl, wipeMove);
-  addUp  (dustEl, wipeEnd);
-
-  function goPhase2() {
-    phase = 2;
-    dustEl.style.opacity       = '0';
-    dustEl.style.pointerEvents = 'none';
-    el('clamp-left').classList.remove('hidden');
-    el('clamp-right').classList.remove('hidden');
-    phaseLabel.textContent = 'Phase 2: Klemmen öffnen';
-    instrEl.textContent    = 'Drücke BEIDE Klemmen innerhalb von 0.5 Sekunden!';
-    clampL = false; clampR = false;
-
-    const tryClamp = (side) => {
-      if (side === 'L') clampL = true;
-      if (side === 'R') clampR = true;
-      if (!clampTimer) clampTimer = setTimeout(() => { clampL = false; clampR = false; clampTimer = null; }, 500);
-      if (clampL && clampR) { clearTimeout(clampTimer); goPhase3(); }
-    };
-
-    [['clamp-left','L'], ['clamp-right','R']].forEach(([id, side]) => {
-      const orig  = el(id);
-      const fresh = orig.cloneNode(true);
-      orig.replaceWith(fresh);
-      el(id).addEventListener('click',    () => tryClamp(side));
-      el(id).addEventListener('touchend', (e) => { e.preventDefault(); tryClamp(side); });
-    });
-  }
-
-  function goPhase3() {
-    phase = 3;
-    el('clamp-left').classList.add('hidden');
-    el('clamp-right').classList.add('hidden');
-    stickEl.classList.remove('hidden');
-    phaseLabel.textContent = 'Phase 3: RAM einstecken';
-    instrEl.textContent    = 'Tippe zum Ausrichten auf 0° → dann in den Slot ziehen';
-
-    const orig  = el('ram-stick');
-    const stick = orig.cloneNode(true);
-    orig.replaceWith(stick);
-
-    stick.addEventListener('click', () => {
-      ramAngle = (ramAngle + 45) % 360;
-      el('ram-angle-badge').textContent = ramAngle + '°';
-      stick.style.transform = 'rotate(' + ramAngle + 'deg)';
-    });
-    stick.addEventListener('touchend', (e) => {
-      e.preventDefault();
-      if (ramDragging) { ramDragging = false; return; }
-      ramAngle = (ramAngle + 45) % 360;
-      el('ram-angle-badge').textContent = ramAngle + '°';
-      stick.style.transform = 'rotate(' + ramAngle + 'deg)';
-    });
-
-    stick.addEventListener('touchstart', (e) => {
-      ramDragging = false;
-      const r = stick.getBoundingClientRect();
-      ramDragClone = stick.cloneNode(true);
-      ramDragClone.style.cssText = 'position:fixed;z-index:9999;pointer-events:none;opacity:0.82;width:' + r.width + 'px;left:' + r.left + 'px;top:' + r.top + 'px;transform:rotate(' + ramAngle + 'deg);';
-      document.body.appendChild(ramDragClone);
-    }, { passive: true });
-
-    stick.addEventListener('touchmove', (e) => {
-      e.preventDefault();
-      ramDragging = true;
-      if (!ramDragClone) return;
-      const t = e.touches[0];
-      const r = stick.getBoundingClientRect();
-      ramDragClone.style.left = (t.clientX - r.width / 2) + 'px';
-      ramDragClone.style.top  = (t.clientY - r.height / 2) + 'px';
-    }, { passive: false });
-
-    stick.addEventListener('touchend', (e) => {
-      if (ramDragClone) { ramDragClone.remove(); ramDragClone = null; }
-      if (!ramDragging) return;
-      const t  = e.changedTouches[0];
-      const sr = el('ram-slot').getBoundingClientRect();
-      if (t.clientX >= sr.left && t.clientX <= sr.right && t.clientY >= sr.top && t.clientY <= sr.bottom) tryInsert();
-    });
-
-    stick.setAttribute('draggable', 'true');
-    stick.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/plain', 'ram'));
-    el('ram-slot').addEventListener('dragover', (e) => e.preventDefault());
-    el('ram-slot').addEventListener('drop',     (e) => { e.preventDefault(); tryInsert(); });
-  }
-
-  function tryInsert() {
-    if (ramAngle === 0) {
-      el('ram-slot').classList.add('slot-ready');
-      el('ram-stick').style.visibility = 'hidden';
-      flash('success');
-      refillCoffee(25);
-      setTimeout(() => { showLevel(6); initLevel6(); }, 750);
-    } else {
-      showToast('❌ Falscher Winkel (' + ramAngle + '°)! Drehe auf 0°.');
-      damageBoss(10);
-    }
-  }
-}
-
-// ============================================================
-// LEVEL 6 - QUIZ
-// ============================================================
-function initLevel6() {
-  el('colleague-reply').classList.add('hidden');
-  const cont  = el('quiz-btns');
-  const fresh = cont.cloneNode(true);
-  cont.replaceWith(fresh);
-  qsa('.quiz-opt', el('quiz-btns')).forEach(btn => {
-    btn.addEventListener('click',    () => handleQuiz(btn.dataset.val));
-    btn.addEventListener('touchend', (e) => { e.preventDefault(); handleQuiz(btn.dataset.val); });
-  });
-}
-
-function handleQuiz(val) {
-  qsa('.quiz-opt').forEach(b => { b.disabled = true; b.style.opacity = '0.5'; });
-  const replyEl = el('colleague-reply');
-  const bubble  = el('reply-bubble');
-  replyEl.classList.remove('hidden');
-
-  if (val === 'HTML') {
-    bubble.textContent = '🎉 Absolut richtig! HTML ist Markup, keine Programmiersprache. Du bist gerettet!';
-    spawnConfetti();
-    flash('success');
-    refillCoffee(30);
-    setTimeout(() => { showLevel(7); renderEndScreen(true); }, 1900);
+  const hud = $('hud');
+  if (n >= 1 && n <= 6) {
+    setDisplay(hud, true);
+    $('app').classList.add('hud-on');
   } else {
-    bubble.textContent = '🤔 Sicher? ' + val + ' ist eine echte Programmiersprache...';
-    damageBoss(15);
-    setTimeout(() => {
-      replyEl.classList.add('hidden');
-      qsa('.quiz-opt').forEach(b => { b.disabled = false; b.style.opacity = '1'; });
-    }, 1600);
+    setDisplay(hud, false);
+    $('app').classList.remove('hud-on');
   }
+
+  setDisplay($('level-' + n), true, true);
+
+  if (n === 7) renderEndScreen();
+  else if (levelInits[n]) levelInits[n]();
 }
 
-// ============================================================
-// LEVEL 7 - END SCREEN
-// ============================================================
-function endGame(won) {
-  if (GS.gameOver) return;
-  GS.gameOver = true;
-  stopAllTimers();
-  showLevel(7);
-  renderEndScreen(won);
+function completeLevel(next) {
+  if (gameState.currentLevel >= 7) return;
+  gameState.coffeeLevel = clamp(gameState.coffeeLevel + COFFEE_REFILL, 0, 100);
+  updateHUD();
+  setTimeout(() => {
+    if (gameState.currentLevel < 7) gotoLevel(next);
+  }, 750);
 }
 
-function renderEndScreen(won) {
+/* =========================================================
+   5. LEVEL 7 : FEIERABEND (End-Screen)
+   ========================================================= */
+function renderEndScreen() {
   stopAllTimers();
-  GS.gameOver = true;
-
-  el('end-stats').innerHTML =
-    '&#9749; Kaffee: <span style="color:#4ade80">' + GS.coffeeLevel + '%</span>' +
-    ' &nbsp;|&nbsp; ' +
-    '&#128545; Boss: <span style="color:#f87171">' + GS.bossPatience + '%</span>';
+  const won = gameState.won && gameState.bossPatience > 0 && gameState.coffeeLevel > 0;
+  const title = $('end-title');
+  const rank = $('end-rank');
+  const detail = $('end-detail');
+  const now = new Date();
+  $('stamp-time').textContent =
+    String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
 
   if (won) {
-    el('end-icon').textContent  = '🏆';
-    el('end-title').textContent = 'Schicht erfolgreich überlebt!';
-    el('end-title').style.color = '#86efac';
-
-    let rank, color;
-    if      (GS.bossPatience > 80) { rank = '👑 ROOT-GOTT';     color = '#fde047'; }
-    else if (GS.bossPatience > 40) { rank = '⚙️ SYSADMIN';      color = '#93c5fd'; }
-    else                            { rank = '🖱 MAUS-SCHUBSER'; color = '#9ca3af'; }
-
-    el('end-rank').textContent = rank;
-    el('end-rank').style.color = color;
+    title.textContent = '★ GEWONNEN! ★';
+    title.classList.remove('gameover');
+    let r;
+    if (gameState.bossPatience > 80) r = 'ROOT-GOTT 👑';
+    else if (gameState.bossPatience > 40) r = 'SYSADMIN 🖥';
+    else r = 'MAUS-SCHUBSER 🐭';
+    rank.textContent = 'Rang: ' + r;
+    detail.innerHTML =
+      'Du hast die Schicht überlebt!<br>' +
+      '☕ Kaffee übrig: ' + gameState.coffeeLevel + '%<br>' +
+      '😡 Boss-Geduld übrig: ' + gameState.bossPatience + '%';
+    confetti();
   } else {
-    el('end-icon').textContent  = '💀';
-    el('end-title').textContent = 'GAME OVER';
-    el('end-title').style.color = '#f87171';
+    title.textContent = 'GAME OVER';
+    title.classList.add('gameover');
+    rank.textContent = '';
+    detail.innerHTML = gameState.bossPatience <= 0
+      ? 'Du wurdest gefeuert. Der Boss hat genug. 📦'
+      : 'Du bist eingeschlafen. Zu wenig Kaffee. 😴';
+    flashRed();
+  }
+}
 
-    const reason = GS.coffeeLevel <= 0
-      ? '☕ Totaler Koffeinentzug — du bist eingeschlafen.'
-      : '😡 Boss-Geduld aufgebraucht — du wurdest gefeuert.';
-    el('end-rank').textContent = reason;
-    el('end-rank').style.color = '#fca5a5';
+/* =========================================================
+   6. LEVEL 0 : START + RESTART
+   ========================================================= */
+$('btn-start').addEventListener('click', () => {
+  gameState.bossPatience = 100;
+  gameState.coffeeLevel = 100;
+  gameState.won = false;
+  updateHUD();
+  startCoffeeLoop();
+  gotoLevel(1);
+});
+
+$('btn-restart').addEventListener('click', () => {
+  stopAllTimers();
+  gotoLevel(0);
+});
+
+/* =========================================================
+   7. UNIFIED TOUCH + MOUSE HELPER
+   Alle Minigames nutzen Touch-Events UND Maus-Fallbacks.
+   ========================================================= */
+function addPointer(el, handlers) {
+  const getXY = (e) => {
+    if (e.touches && e.touches.length > 0) {
+      return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+    if (e.changedTouches && e.changedTouches.length > 0) {
+      return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+    }
+    return { x: e.clientX, y: e.clientY };
+  };
+
+  let active = false;
+
+  const start = (e) => {
+    if (active) return;
+    active = true;
+    const p = getXY(e);
+    if (handlers.start) handlers.start(p.x, p.y, e);
+  };
+
+  const move = (e) => {
+    if (!active) return;
+    if (e.cancelable) e.preventDefault();
+    const p = getXY(e);
+    if (handlers.move) handlers.move(p.x, p.y, e);
+  };
+
+  const end = (e) => {
+    if (!active) return;
+    active = false;
+    const p = getXY(e);
+    if (handlers.end) handlers.end(p.x, p.y, e);
+  };
+
+  el.addEventListener('touchstart', start, { passive: true });
+  el.addEventListener('touchmove', move, { passive: false });
+  el.addEventListener('touchend', end, { passive: true });
+  el.addEventListener('touchcancel', end, { passive: true });
+  el.addEventListener('mousedown', start);
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+}
+
+function pointInRect(x, y, rect, pad) {
+  const p = pad || 0;
+  return x >= rect.left - p && x <= rect.right + p &&
+         y >= rect.top - p && y <= rect.bottom + p;
+}
+
+/* =========================================================
+   8. LEVEL 1 : HARDWARE-SETUP (HDMI-Kabel)
+   ========================================================= */
+levelInits[1] = function () {
+  const cable = $('cable');
+  const cableInner = $('cable-inner');
+  const portMb = $('port-mb');
+  const portGpu = $('port-gpu');
+
+  let flipCount = 0;
+  let home = null;          // Ausgangsposition des Kabels
+  let startX = 0, startY = 0;
+  let baseX = 0, baseY = 0; // kumulierte Verschiebung
+  let moved = false;
+  let done = false;
+
+  home = cable.getBoundingClientRect();
+
+  function resetCable() {
+    baseX = 0; baseY = 0;
+    cable.style.transform = 'translate(0px, 0px)';
   }
 
-  const btn   = el('btn-restart');
-  const fresh = btn.cloneNode(true);
-  btn.replaceWith(fresh);
-  const trigger = (e) => { e.preventDefault(); resetGame(); };
-  el('btn-restart').addEventListener('click',    trigger);
-  el('btn-restart').addEventListener('touchend', trigger);
-}
+  function applyFlip() {
+    cableInner.classList.remove('flip-1', 'flip-2');
+    if (flipCount % 2 === 1) cableInner.classList.add('flip-1');
+    else if (flipCount > 0) cableInner.classList.add('flip-2');
+  }
 
-function resetGame() {
-  stopAllTimers();
-  GS.gameOver = false;
-  el('confetti-container').innerHTML = '';
-  el('bsod').classList.add('hidden');
-  el('ram-slot').classList.remove('slot-ready');
-  showLevel(0);
-  initLevel0();
-}
+  addPointer(cable, {
+    start(x, y) {
+      if (done) return;
+      home = cable.getBoundingClientRect();
+      startX = x; startY = y;
+      moved = false;
+      cable.classList.add('dragging');
+    },
+    move(x, y) {
+      if (done) return;
+      const dx = x - startX;
+      const dy = y - startY;
+      if (Math.abs(dx) + Math.abs(dy) > 10) moved = true;
+      if (moved) {
+        cable.style.transform = 'translate(' + (baseX + dx) + 'px, ' + (baseY + dy) + 'px)';
+      }
+    },
+    end(x, y) {
+      if (done) return;
+      cable.classList.remove('dragging');
 
-// ============================================================
-// BOOTSTRAP
-// ============================================================
-document.addEventListener('DOMContentLoaded', () => {
-  showLevel(0);
-  initLevel0();
-});
+      // TAP: Kabel drehen (flipCount + 1, 180°-Animation)
+      if (!moved) {
+        flipCount++;
+        applyFlip();
+        return;
+      }
+
+      baseX += x - startX;
+      baseY += y - startY;
+
+      const rMb = portMb.getBoundingClientRect();
+      const rGpu = portGpu.getBoundingClientRect();
+
+      if (pointInRect(x, y, rMb, 12)) {
+        // Fehler 1: Mainboard-Port
+        changePatience(-15, 'Falscher Port! GPU ist verbaut!');
+        resetCable();
+        return;
+      }
+
+      if (pointInRect(x, y, rGpu, 12)) {
+        if (flipCount < 2) {
+          // Fehler 2: richtiger Port, falsche Orientierung
+          showToast('Passt nicht. Dreh das Kabel!');
+          resetCable();
+          return;
+        }
+        // ERFOLG: GPU + flipCount >= 2
+        done = true;
+        cable.classList.add('dock');
+        portGpu.classList.add('hot');
+        flickerScreen();
+        showToast('Monitor erkannt! Signal steht. ✅', 'good');
+        completeLevel(2);
+        return;
+      }
+
+      // Nirgends losgelassen → zurückspringen
+      resetCable();
+    },
+  });
+};
+
+/* =========================================================
+   9. LEVEL 2 : TICKET-TINDER (First-Level Support)
+   ========================================================= */
+const TICKETS = [
+  { id: 'T-1042', emoji: '☕', text: 'Kaffee in Tastatur verschüttet', isDumbQuestion: true },
+  { id: 'T-1043', emoji: '🔥', text: 'Datenbank brennt', isDumbQuestion: false },
+  { id: 'T-1044', emoji: '🗑', text: 'User hat das Internet gelöscht', isDumbQuestion: true },
+  { id: 'T-1045', emoji: '📉', text: 'Server offline – Shop down', isDumbQuestion: false },
+  { id: 'T-1046', emoji: '🖱', text: 'Maus funktioniert nicht (USB nicht eingesteckt)', isDumbQuestion: true },
+];
+
+levelInits[2] = function () {
+  const stack = $('card-stack');
+  let swiped = 0;
+  let queue = TICKETS.slice();
+
+  $('counter-2').textContent = '0 / 5';
+
+  function renderStack() {
+    stack.innerHTML = '';
+    // untere Karten zuerst, oberste zuletzt (höchster z-Index)
+    for (let i = queue.length - 1; i >= 0; i--) {
+      const t = queue[i];
+      const card = document.createElement('div');
+      card.className = 'ticket-card';
+      card.style.transform = 'translateY(' + i * 8 + 'px) scale(' + (1 - i * 0.04) + ')';
+      card.style.zIndex = String(100 - i);
+      card.innerHTML =
+        '<span class="ticket-id">' + t.id + '</span>' +
+        '<span class="ticket-emoji">' + t.emoji + '</span>' +
+        '<span class="ticket-text">' + t.text + '</span>' +
+        '<span class="stamp-ok">ESKALIERT</span>' +
+        '<span class="stamp-no">IGNORIERT</span>';
+      stack.appendChild(card);
+      if (i === 0) attachSwipe(card, t);
+    }
+  }
+
+  function attachSwipe(card, ticket) {
+    let sx = 0;
+    let dragging = false;
+    const stampOk = card.querySelector('.stamp-ok');
+    const stampNo = card.querySelector('.stamp-no');
+
+    addPointer(card, {
+      start(x) { sx = x; dragging = false; card.style.transition = 'none'; },
+      move(x, y) {
+        const dx = x - sx;
+        if (Math.abs(dx) > 6) dragging = true;
+        if (!dragging) return;
+        card.style.transform = 'translateX(' + dx + 'px) rotate(' + dx / 14 + 'deg)';
+        stampOk.style.opacity = clamp(dx / 80, 0, 1);
+        stampNo.style.opacity = clamp(-dx / 80, 0, 1);
+      },
+      end(x) {
+        card.style.transition = '';
+        const dx = x - sx;
+        if (!dragging || Math.abs(dx) < 70) {
+          // Snap-back
+          card.style.transform = 'translateX(0) rotate(0)';
+          stampOk.style.opacity = 0;
+          stampNo.style.opacity = 0;
+          return;
+        }
+        const swipedRight = dx > 0;
+        const correct = (swipedRight && !ticket.isDumbQuestion) || (!swipedRight && ticket.isDumbQuestion);
+
+        // Karte wegfliegen lassen
+        card.style.transform = 'translateX(' + (swipedRight ? 1 : -1) * 140 + 'vw) rotate(' + (swipedRight ? 30 : -30) + 'deg)';
+        card.style.opacity = '0';
+
+        swiped++;
+        $('counter-2').textContent = swiped + ' / 5';
+
+        if (correct) {
+          flashGreen();
+        } else {
+          changePatience(-10, swipedRight ? 'Das war KEIN Notfall!' : 'Das war wichtig!');
+        }
+
+        queue.shift();
+        if (swiped >= 5) {
+          showToast('Alle Tickets bearbeitet! 🎫', 'good');
+          completeLevel(3);
+        } else if (gameState.currentLevel === 2) {
+          setTimeout(renderStack, 260);
+        }
+      },
+    });
+  }
+
+  renderStack();
+};
+
+levelCleanups[2] = function () {
+  $('card-stack').innerHTML = '';
+};
+
+/* =========================================================
+   10. LEVEL 3 : PASSWORT-PING-PONG
+   ========================================================= */
+const PW_TIME_MS = 20000;
+
+levelInits[3] = function () {
+  const input = $('pw-input');
+  const btnSave = $('btn-save-pw');
+  const timerFill = $('timer-fill');
+  const timerText = $('timer-text');
+
+  const rules = {
+    upper: { el: $('rule-case'), test: (v) => /[A-Z]/.test(v) },
+    special: { el: $('rule-special'), test: (v) => /[!@#$%^&*]/.test(v) },
+    forbidden: {
+      el: $('rule-forbidden'),
+      test: (v) => v.length > 0 && v.toLowerCase() !== 'passwort' && v.toLowerCase() !== 'admin',
+    },
+    // Emoji = erweiterter Unicode außerhalb ASCII/BMP-Buchstaben
+    emoji: { el: $('rule-emoji'), test: (v) => /[^\u0000-\u24FF]/.test(v) },
+  };
+
+  input.value = '';
+  setDisplay(btnSave, false);
+  Object.values(rules).forEach((r) => r.el.classList.remove('ok'));
+
+  function checkAll() {
+    const v = input.value;
+    let allOk = v.length > 0;
+    Object.values(rules).forEach((r) => {
+      const ok = r.test(v);
+      r.el.classList.toggle('ok', ok);
+      if (!ok) allOk = false;
+    });
+    setDisplay(btnSave, allOk);
+  }
+
+  input.addEventListener('keyup', checkAll);
+  input.addEventListener('input', checkAll); // Fallback für mobile Tastaturen
+
+  btnSave.onclick = () => {
+    stopTimer('pw');
+    showToast('Passwort gespeichert. Erinnere dich in 30 Tagen nicht daran. 🔒', 'good');
+    flashGreen();
+    completeLevel(4);
+  };
+
+  // 20-Sekunden-Timer
+  const t0 = Date.now();
+  stopTimer('pw');
+  gameState.timers.pw = setInterval(() => {
+    if (gameState.currentLevel !== 3) { stopTimer('pw'); return; }
+    const remain = PW_TIME_MS - (Date.now() - t0);
+    if (remain <= 0) {
+      stopTimer('pw');
+      timerFill.style.width = '0%';
+      timerText.textContent = '0s';
+      // Zeitlimit verpasst: -20 Geduld, Timer startet neu
+      changePatience(-20, 'Zu langsam! Der Boss wartet!');
+      if (gameState.currentLevel === 3) {
+        levelInits[3]();
+      }
+      return;
+    }
+    const pct = (remain / PW_TIME_MS) * 100;
+    timerFill.style.width = pct + '%';
+    timerFill.classList.toggle('danger', pct < 30);
+    timerText.textContent = Math.ceil(remain / 1000) + 's';
+  }, 100);
+};
+
+levelCleanups[3] = function () {
+  stopTimer('pw');
+};
+
+/* =========================================================
+   11. LEVEL 4 : VIREN-JAGD (Whack-a-Mole)
+   ========================================================= */
+const VIRUS_EMOJIS = ['😈', '👾', '🦠', '💣'];
+const SYSTEM_EMOJIS = ['📁', '💾', '📄', '🖥'];
+const VIRUS_NAMES = ['crypt0.exe', 'trojan.dll', 'wurm.bat', 'sehr_echt.exe'];
+const SYSTEM_NAMES = ['system32', 'dokumente', 'gehalt.xlsx', 'kernel'];
+
+levelInits[4] = function () {
+  const desktop = $('desktop');
+  let kills = 0;
+  $('kill-count').textContent = '0';
+
+  function spawnIcon() {
+    if (gameState.currentLevel !== 4) return;
+    const isVirus = Math.random() < 0.45;
+    const icon = document.createElement('div');
+    icon.className = 'file-icon';
+
+    const dr = desktop.getBoundingClientRect();
+    const x = 8 + Math.random() * Math.max(dr.width - 80, 60);
+    const y = 8 + Math.random() * Math.max(dr.height - 110, 60);
+    icon.style.left = x + 'px';
+    icon.style.top = y + 'px';
+
+    const emoji = isVirus
+      ? VIRUS_EMOJIS[Math.floor(Math.random() * VIRUS_EMOJIS.length)]
+      : SYSTEM_EMOJIS[Math.floor(Math.random() * SYSTEM_EMOJIS.length)];
+    const name = isVirus
+      ? VIRUS_NAMES[Math.floor(Math.random() * VIRUS_NAMES.length)]
+      : SYSTEM_NAMES[Math.floor(Math.random() * SYSTEM_NAMES.length)];
+
+    icon.innerHTML = '<span class="fi-emoji">' + emoji + '</span><span class="fi-name">' + name + '</span>';
+    desktop.appendChild(icon);
+
+    // Verschwindet nach 2 Sekunden von allein
+    const despawn = setTimeout(() => { if (icon.parentNode) icon.remove(); }, 2000);
+
+    addPointer(icon, {
+      start(px, py, e) {
+        if (e.cancelable) e.preventDefault();
+        clearTimeout(despawn);
+        if (!icon.parentNode) return;
+
+        if (isVirus) {
+          // Virus gelöscht → Partikel-Explosion
+          const ir = icon.getBoundingClientRect();
+          const cx = ir.left + ir.width / 2;
+          const cy = ir.top + ir.height / 2;
+          for (let i = 0; i < 10; i++) {
+            const p = document.createElement('div');
+            p.className = 'particle';
+            const ang = (Math.PI * 2 * i) / 10 + Math.random();
+            const dist = 26 + Math.random() * 30;
+            p.style.setProperty('--dx', Math.cos(ang) * dist + 'px');
+            p.style.setProperty('--dy', Math.sin(ang) * dist + 'px');
+            p.style.left = cx - 3 + 'px';
+            p.style.top = cy - 3 + 'px';
+            document.body.appendChild(p);
+            setTimeout(() => p.remove(), 600);
+          }
+          icon.remove();
+          kills++;
+          $('kill-count').textContent = kills;
+          if (kills >= 10) {
+            stopTimer('virus');
+            flashGreen();
+            showToast('System bereinigt! 🛡', 'good');
+            completeLevel(5);
+          }
+        } else {
+          // Systemdatei angefasst → BSOD + Geduld -25
+          icon.remove();
+          showBSOD(1000);
+          changePatience(-25, 'SYSTEMDATEI GELÖSCHT!');
+        }
+      },
+    });
+  }
+
+  stopTimer('virus');
+  gameState.timers.virus = setInterval(spawnIcon, 800);
+};
+
+levelCleanups[4] = function () {
+  stopTimer('virus');
+  const desktop = $('desktop');
+  desktop.querySelectorAll('.file-icon').forEach((el) => el.remove());
+};
+
+/* =========================================================
+   12. LEVEL 5 : RAM-UPGRADE (3 Phasen)
+   ========================================================= */
+const DUST_DISTANCE = 420;   // benötigte Wisch-Distanz in px
+const CLIP_WINDOW_MS = 500;  // beide Klammern innerhalb von 0.5s
+
+levelInits[5] = function () {
+  const cleanArea = $('clean-area');
+  const dust = $('dust');
+  const clipLeft = $('clip-left');
+  const clipRight = $('clip-right');
+  const slot = $('slot');
+  const ram = $('ram');
+  const ramInner = $('ram-inner');
+  const phaseLabel = $('phase-label');
+  const ramHint = $('ram-hint');
+
+  let phase = 1;
+
+  // Reset UI
+  dust.classList.remove('gone');
+  clipLeft.disabled = true;
+  clipRight.disabled = true;
+  clipLeft.classList.remove('open');
+  clipRight.classList.remove('open');
+  slot.classList.remove('armed', 'filled');
+  setDisplay(ram, false);
+  setDisplay(ramHint, false);
+  ram.style.transform = 'translate(0px, 0px)';
+  ramInner.classList.remove('rot');
+  phaseLabel.textContent = 'Phase 1/3: Wische den Staub vom Mainboard!';
+
+  /* --- Phase 1: Staub wegwischen --- */
+  let dustDist = 0;
+  let lastX = null, lastY = null;
+
+  addPointer(cleanArea, {
+    start(x, y) { lastX = x; lastY = y; },
+    move(x, y) {
+      if (phase !== 1 || lastX === null) return;
+      dustDist += Math.hypot(x - lastX, y - lastY);
+      lastX = x; lastY = y;
+      dust.style.opacity = String(clamp(1 - dustDist / DUST_DISTANCE, 0, 1));
+      if (dustDist >= DUST_DISTANCE) {
+        phase = 2;
+        dust.classList.add('gone');
+        clipLeft.disabled = false;
+        clipRight.disabled = false;
+        phaseLabel.textContent = 'Phase 2/3: Öffne beide Klammern – innerhalb von 0,5s!';
+        flashGreen();
+      }
+    },
+    end() { lastX = null; lastY = null; },
+  });
+
+  /* --- Phase 2: Klammern innerhalb 0.5s --- */
+  let firstClipTime = 0;
+
+  function pressClip(which) {
+    if (phase !== 2) return;
+    const now = Date.now();
+    const btn = which === 'left' ? clipLeft : clipRight;
+    btn.classList.add('open');
+
+    if (firstClipTime === 0) {
+      firstClipTime = now;
+      return;
+    }
+
+    if (now - firstClipTime <= CLIP_WINDOW_MS &&
+        clipLeft.classList.contains('open') &&
+        clipRight.classList.contains('open')) {
+      // Beide rechtzeitig offen
+      phase = 3;
+      slot.classList.add('armed');
+      phaseLabel.textContent = 'Phase 3/3: Dreh den RAM richtig und steck ihn ein!';
+      setDisplay(ram, true, 'block');
+      setDisplay(ramHint, true);
+      flashGreen();
+    } else {
+      // Zu langsam → zurücksetzen
+      firstClipTime = now;
+      clipLeft.classList.remove('open');
+      clipRight.classList.remove('open');
+      btn.classList.add('open');
+      showToast('Zu langsam! Beide Klammern gleichzeitig!');
+    }
+  }
+
+  clipLeft.onclick = () => pressClip('left');
+  clipRight.onclick = () => pressClip('right');
+
+  /* --- Phase 3: RAM einstecken (Tap = drehen, Drag = einsetzen) --- */
+  let ramRot = 0;        // 0 = korrekt, 180 = falsch
+  let ramDone = false;
+  let rsx = 0, rsy = 0;
+  let ramMoved = false;
+  let ramBaseX = 0, ramBaseY = 0;
+
+  addPointer(ram, {
+    start(x, y) {
+      if (phase !== 3 || ramDone) return;
+      rsx = x; rsy = y;
+      ramMoved = false;
+      ram.classList.add('dragging');
+    },
+    move(x, y) {
+      if (phase !== 3 || ramDone) return;
+      const dx = x - rsx;
+      const dy = y - rsy;
+      if (Math.abs(dx) + Math.abs(dy) > 10) ramMoved = true;
+      if (ramMoved) {
+        ram.style.transform = 'translate(' + (ramBaseX + dx) + 'px, ' + (ramBaseY + dy) + 'px)';
+      }
+    },
+    end(x, y) {
+      if (phase !== 3 || ramDone) return;
+      ram.classList.remove('dragging');
+
+      // TAP: Riegel rotieren
+      if (!ramMoved) {
+        ramRot = (ramRot + 180) % 360;
+        ramInner.classList.toggle('rot', ramRot === 180);
+        return;
+      }
+
+      ramBaseX += x - rsx;
+      ramBaseY += y - rsy;
+
+      const rSlot = slot.getBoundingClientRect();
+      if (pointInRect(x, y, rSlot, 16)) {
+        if (ramRot !== 0) {
+          showToast('Rastet nicht ein – falscher Winkel! Dreh den Riegel!');
+          ramBaseX = 0; ramBaseY = 0;
+          ram.style.transform = 'translate(0px, 0px)';
+          return;
+        }
+        // ERFOLG: korrekt eingesetzt
+        ramDone = true;
+        ramBaseX = 0; ramBaseY = 0;
+        ram.style.transform = 'translate(0px, 0px)';
+        setDisplay(ram, false);
+        slot.classList.remove('armed');
+        slot.classList.add('filled');
+        flickerScreen();
+        showToast('16 GB erkannt. Der Rechner atmet auf. 🚀', 'good');
+        completeLevel(6);
+        return;
+      }
+
+      // Daneben → zurück
+      ramBaseX = 0; ramBaseY = 0;
+      ram.style.transform = 'translate(0px, 0px)';
+    },
+  });
+};
+
+/* =========================================================
+   13. LEVEL 6 : DAS KAFFEE-QUIZ
+   ========================================================= */
+levelInits[6] = function () {
+  const reply = $('colleague-reply');
+  setDisplay(reply, false);
+  const buttons = document.querySelectorAll('.answer-btn');
+  let solved = false;
+
+  buttons.forEach((btn) => {
+    btn.classList.remove('correct', 'wrong');
+    btn.onclick = () => {
+      if (solved) return;
+      if (btn.dataset.answer === 'HTML') {
+        solved = true;
+        btn.classList.add('correct');
+        confetti();
+        showToast('Korrekt! HTML ist eine Auszeichnungssprache. 🎉', 'good');
+        gameState.won = true;
+        completeLevel(7);
+      } else {
+        btn.classList.add('wrong');
+        setDisplay(reply, true);
+        changePatience(-15, 'Der Kollege zweifelt an dir.');
+        setTimeout(() => btn.classList.remove('wrong'), 500);
+      }
+    };
+  });
+};
+
+/* =========================================================
+   14. BOOT
+   ========================================================= */
+updateHUD();
+// Level 0 ist per HTML-Default sichtbar (display:flex)
