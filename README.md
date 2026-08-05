@@ -1,3 +1,9 @@
+
+
+https://florianalternativ-cmyk.github.io/it-survival-9to5/
+
+
+
 # IT-SURVIVAL: Der 9-to-5 Simulator
 
 Ein vollständiges, story-getriebenes 2D-Browsergame für GitHub Pages. Reines HTML, CSS und Vanilla JavaScript; keine Build-Tools, kein Backend und keine externen Bild- oder Audiodateien.
